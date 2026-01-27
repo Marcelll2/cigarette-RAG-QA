@@ -18,7 +18,8 @@ from langchain_huggingface import HuggingFaceEmbeddings
 
 from langchain_community.vectorstores import FAISS
 from langchain_core.prompts import PromptTemplate
-from langchain_community.llms import Ollama
+# from langchain_community.llms import Ollama  # Deprecated
+from langchain_ollama import OllamaLLM
 
 
 class BasicRAG:
@@ -47,11 +48,12 @@ class BasicRAG:
         )
         
         # 初始化LLM
-        self.llm = Ollama(
+        self.llm = OllamaLLM(
             model=self.config.get("llm_model", "qwen2:0.5b"),
             temperature=self.config.get("temperature", 0.1),
             cache_dir=self.config.get("llm_cache_folder", "./llm_cache")
         )
+        print(f'self.llm: {self.llm}')
         
         print("RAG组件初始化完成")
     
