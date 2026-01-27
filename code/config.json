@@ -1,0 +1,56 @@
+{
+    "base_config": {
+        "chunk_size": 1000,
+        "chunk_overlap": 200,
+        "embedding_model": "BAAI/bge-small-zh-v1.5",
+        "cache_folder": "./embedding_cache",
+        "llm_cache_folder": "./llm_cache",
+        "llm_model": "qwen2:0.5b",
+        "temperature": 0.1,
+        "vector_store_path": "./vector_store"
+    },
+    "finetuning_config": {
+        "retrieval_param_grid": {
+            "k": [2, 3, 4, 5],
+            "similarity_threshold": [0.7, 0.8, 0.9]
+        },
+        "prompt_candidates": [
+            "使用以下上下文来回答用户的问题。上下文：{context} 问题：{question} 请使用中文回答，并且只基于提供的上下文。",
+            "基于以下上下文，简洁地回答用户的问题。上下文：{context} 问题：{question} 回答：",
+            "请根据以下上下文信息，准确回答用户的问题。上下文：{context} 问题：{question} 回答要求：1. 仅使用提供的上下文；2. 使用中文；3. 简洁明了。回答："
+        ],
+        "chunking_params": {
+            "chunk_sizes": [500, 1000, 1500, 2000],
+            "chunk_overlaps": [100, 200, 300]
+        },
+        "embedding_candidates": [
+            "BAAI/bge-small-zh-v1.5",
+            "BAAI/bge-base-zh-v1.5",
+            "BAAI/bge-large-zh-v1.5",
+            "GanymedeNil/text2vec-large-chinese"
+        ]
+    },
+    "test_data": {
+        "test_queries": [
+            "卷烟知识库的主要功能是什么？",
+            "如何使用卷烟知识库进行查询？",
+            "卷烟知识库包含哪些类型的信息？",
+            "卷烟知识库的优势是什么？",
+            "如何更新卷烟知识库？"
+        ],
+        "test_cases": [
+            {
+                "query": "卷烟知识库的主要功能是什么？",
+                "expected_answer": "卷烟知识库主要用于存储和检索卷烟相关的各类信息，包括产品信息、政策法规、销售数据等。"
+            },
+            {
+                "query": "如何使用卷烟知识库进行查询？",
+                "expected_answer": "用户可以通过关键词搜索、分类浏览等方式使用卷烟知识库进行查询。"
+            },
+            {
+                "query": "卷烟知识库包含哪些类型的信息？",
+                "expected_answer": "卷烟知识库包含产品信息、政策法规、销售数据、市场分析等类型的信息。"
+            }
+        ]
+    }
+}
