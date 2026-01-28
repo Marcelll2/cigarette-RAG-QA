@@ -10,7 +10,7 @@ import json
 from typing import List, Dict, Any
 
 # 假设使用的库，实际使用时需要安装
-from langchain_community.document_loaders import TextLoader, DirectoryLoader
+from langchain_community.document_loaders import TextLoader, DirectoryLoader, UnstructuredExcelLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 # from langchain_community.embeddings import HuggingFaceEmbeddings # 备选，但不推荐
@@ -50,83 +50,102 @@ class BasicRAG:
         # 初始化LLM
         self.llm = OllamaLLM(
             model=self.config.get("llm_model", "qwen2:0.5b"),
-            temperature=self.config.get("temperature", 0.1),
-            cache_dir=self.config.get("llm_cache_folder", "./llm_cache")
+            temperature=self.config.get("temperature", 0.1)
         )
-        print(f'self.llm: {self.llm}')
         
         print("RAG组件初始化完成")
     
     def load_documents(self, data_path: str) -> List[Any]:
         """加载文档"""
-        # loader = DirectoryLoader(
-        #     data_path,
-        #     glob="**/*.txt",
-        #     loader_cls=TextLoader
-        # )
-        # documents = loader.load()
-        # return documents
-        print(f"加载文档: {data_path}")
-        return []
+        documents = []
+        
+        if os.path.isdir(data_path):
+            # 加载目录中的所有文件
+            txt_loader = DirectoryLoader(
+                data_path,
+                glob="**/*.txt",
+                loader_cls=TextLoader
+            )
+            documents.extend(txt_loader.load())
+            
+            # 加载Excel文件
+            excel_loader = DirectoryLoader(
+                data_path,
+                glob="**/*.xlsx",
+                loader_cls=UnstructuredExcelLoader
+            )
+            documents.extend(excel_loader.load())
+        elif os.path.isfile(data_path):
+            # 加载单个文件
+            if data_path.endswith('.txt'):
+                loader = TextLoader(data_path)
+                documents.extend(loader.load())
+            elif data_path.endswith('.xlsx'):
+                loader = UnstructuredExcelLoader(data_path)
+                documents.extend(loader.load())
+        
+        print(f"加载文档: {data_path}, 共{len(documents)}个文档")
+        return documents
     
     def split_documents(self, documents: List[Any]) -> List[Any]:
         """分割文档"""
-        # split_docs = self.text_splitter.split_documents(documents)
-        # return split_docs
-        print("分割文档")
-        return []
+        split_docs = self.text_splitter.split_documents(documents)
+        print(f"分割文档完成，从{len(documents)}个文档分割为{len(split_docs)}个片段")
+        return split_docs
     
     def create_vector_store(self, documents: List[Any], store_path: str = None):
         """创建向量存储"""
-        # if os.path.exists(store_path):
-        #     # 加载现有向量库
-        #     self.vector_store = FAISS.load_local(
-        #         store_path,
-        #         self.embedding_model,
-        #         allow_dangerous_deserialization=True
-        #     )
-        #     print(f"加载现有向量库: {store_path}")
-        # else:
-        #     # 创建新向量库
-        #     self.vector_store = FAISS.from_documents(
-        #         documents,
-        #         self.embedding_model
-        #     )
-        #     # 保存向量库
-        #     if store_path:
-        #         self.vector_store.save_local(store_path)
-        #         print(f"向量库保存到: {store_path}")
-        print(f"创建向量存储: {store_path}")
+        import os
+        
+        if store_path and os.path.exists(store_path):
+            # 加载现有向量库
+            self.vector_store = FAISS.load_local(
+                store_path,
+                self.embedding_model,
+                allow_dangerous_deserialization=True
+            )
+            print(f"加载现有向量库: {store_path}")
+        else:
+            # 创建新向量库
+            self.vector_store = FAISS.from_documents(
+                documents,
+                self.embedding_model
+            )
+            # 保存向量库
+            if store_path:
+                self.vector_store.save_local(store_path)
+                print(f"向量库保存到: {store_path}")
+        
+        print(f"创建向量存储完成，文档数量: {len(documents)}")
     
     def retrieve(self, query: str, k: int = 3) -> List[Any]:
         """检索相关文档"""
-        # if not self.vector_store:
-        #     raise ValueError("向量存储未初始化")
-        # 
-        # docs = self.vector_store.similarity_search(query, k=k)
-        # return docs
-        print(f"检索查询: {query}, 前{k}个结果")
-        return []
+        if not self.vector_store:
+            raise ValueError("向量存储未初始化")
+        
+        docs = self.vector_store.similarity_search(query, k=k)
+        print(f"检索查询: {query}, 找到{len(docs)}个相关文档")
+        return docs
     
     def generate_answer(self, query: str, retrieved_docs: List[Any]) -> str:
         """生成回答"""
-        # prompt_template = PromptTemplate(
-        #     input_variables=["context", "question"],
-        #     template="""使用以下上下文来回答用户的问题。
-        # 上下文：
-        # {context}
-        # 问题：{question}
-        # 请使用中文回答，并且只基于提供的上下文。如果上下文不足以回答问题，请说"根据提供的信息无法回答此问题"。
-        # 回答："""
-        # )
-        # 
-        # context = "\n".join([doc.page_content for doc in retrieved_docs])
-        # prompt = prompt_template.format(context=context, question=query)
-        # 
-        # response = self.llm.invoke(prompt)
-        # return response
-        print(f"生成回答: {query}")
-        return "这是一个示例回答"
+        prompt_template = PromptTemplate(
+            input_variables=["context", "question"],
+            template="""使用以下上下文来回答用户的问题。
+        上下文：
+        {context}
+        问题：{question}
+        请使用中文回答，并且只基于提供的上下文。如果上下文不足以回答问题，请说"根据提供的信息无法回答此问题"。
+        回答："""
+        )
+        
+        context = "\n".join([doc.page_content for doc in retrieved_docs])
+        prompt = prompt_template.format(context=context, question=query)
+        
+        response = self.llm.invoke(prompt)
+        return response
+        # print(f"生成回答: {query}")
+        # return "这是一个示例回答"
     
     def rag_pipeline(self, query: str, k: int = 3) -> str:
         """完整的RAG流水线"""
@@ -175,6 +194,17 @@ def main():
     
     # 初始化组件
     rag.init_components()
+    
+    # 加载Excel文档
+    data_path = "../cigaratte_data.xlsx"  # 假设Excel文件在data目录
+    documents = rag.load_documents(data_path)
+    
+    # 分割文档
+    split_docs = rag.split_documents(documents)
+    
+    # 创建向量存储
+    store_path = "../vector_store"
+    # rag.create_vector_store(split_docs, store_path)
     
     # 示例使用
     query = "卷烟知识库的主要功能是什么？"
