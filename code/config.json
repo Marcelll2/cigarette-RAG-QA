@@ -6,7 +6,8 @@
         "cache_folder": "./embedding_cache",
         "llm_model": "qwen2:0.5b",
         "temperature": 0.1,
-        "vector_store_path": "./vector_store"
+        "vector_store_path": "./vector_store",
+        "debug_save_pth": "./debug_save"
     },
     "finetuning_config": {
         "retrieval_param_grid": {

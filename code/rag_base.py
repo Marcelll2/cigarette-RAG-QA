@@ -11,6 +11,8 @@ from typing import List, Dict, Any
 
 # 假设使用的库，实际使用时需要安装
 from langchain_community.document_loaders import TextLoader, DirectoryLoader, UnstructuredExcelLoader
+import pandas as pd
+from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 # from langchain_community.embeddings import HuggingFaceEmbeddings # 备选，但不推荐
@@ -69,29 +71,135 @@ class BasicRAG:
             documents.extend(txt_loader.load())
             
             # 加载Excel文件
-            excel_loader = DirectoryLoader(
-                data_path,
-                glob="**/*.xlsx",
-                loader_cls=UnstructuredExcelLoader
-            )
-            documents.extend(excel_loader.load())
+            import glob
+            excel_files = glob.glob(os.path.join(data_path, "**/*.xlsx"), recursive=True)
+            for excel_file in excel_files:
+                # 使用pandas直接读取Excel文件
+                try:
+                    # 读取所有工作表
+                    xls = pd.ExcelFile(excel_file)
+                    for sheet_name in xls.sheet_names:
+                        # 读取工作表内容
+                        df = pd.read_excel(excel_file, sheet_name=sheet_name)
+                        # 按行创建文档
+                        for idx, row in df.iterrows():
+                            # 将行转换为字符串
+                            row_content = "\t".join([f"{col}: {val}" for col, val in row.items() if pd.notna(val)])
+                            if row_content.strip():
+                                # 创建文档对象
+                                doc = Document(
+                                    page_content=row_content.strip(),
+                                    metadata={
+                                        "source": excel_file,
+                                        "sheet": sheet_name,
+                                        "row": idx + 2  # +2 因为Excel行号从1开始，且有表头
+                                    }
+                                )
+                                documents.append(doc)
+                except Exception as e:
+                    print(f"处理Excel文件时出错 {excel_file}: {e}")
         elif os.path.isfile(data_path):
             # 加载单个文件
             if data_path.endswith('.txt'):
                 loader = TextLoader(data_path)
                 documents.extend(loader.load())
             elif data_path.endswith('.xlsx'):
-                loader = UnstructuredExcelLoader(data_path)
-                documents.extend(loader.load())
+                # 使用pandas直接读取Excel文件
+                try:
+                    # 读取所有工作表
+                    xls = pd.ExcelFile(data_path)
+                    for sheet_name in xls.sheet_names:
+                        # 读取工作表内容
+                        df = pd.read_excel(data_path, sheet_name=sheet_name)
+                        # 按行创建文档
+                        for idx, row in df.iterrows():
+                            # 将行转换为字符串
+                            row_content = "\t".join([f"{col}: {val}" for col, val in row.items() if pd.notna(val)])
+                            if row_content.strip():
+                                # 创建文档对象
+                                doc = Document(
+                                    page_content=row_content.strip(),
+                                    metadata={
+                                        "source": data_path,
+                                        "sheet": sheet_name,
+                                        "row": idx + 2  # +2 因为Excel行号从1开始，且有表头
+                                    }
+                                )
+                                documents.append(doc)
+                except Exception as e:
+                    print(f"处理Excel文件时出错 {data_path}: {e}")
         
         print(f"加载文档: {data_path}, 共{len(documents)}个文档")
         return documents
     
     def split_documents(self, documents: List[Any]) -> List[Any]:
         """分割文档"""
-        split_docs = self.text_splitter.split_documents(documents)
+        # Excel文件已经在load_documents中按行处理，这里只需要处理非Excel文档
+        split_docs = []
+        
+        for doc in documents:
+            # 检查是否是Excel文档（通过metadata中的source字段判断）
+            if 'xlsx' in doc.metadata.get('source', ''):
+                # Excel文档已经按行分割，直接添加
+                split_docs.append(doc)
+            else:
+                # 对于非Excel文档，使用默认的文本分割器
+                split_docs.extend(self.text_splitter.split_documents([doc]))
+        
         print(f"分割文档完成，从{len(documents)}个文档分割为{len(split_docs)}个片段")
         return split_docs
+    
+    def save_documents(self, documents: List[Any], save_path: str):
+        """保存文档到文件"""
+        import json
+        import os
+        
+        # 确保保存目录存在
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        
+        # 准备文档数据
+        documents_data = []
+        for i, doc in enumerate(documents):
+            doc_data = {
+                "id": i,
+                "page_content": doc.page_content,
+                "metadata": doc.metadata
+            }
+            documents_data.append(doc_data)
+        
+        # 保存为JSON文件
+        with open(save_path, 'w', encoding='utf-8') as f:
+            json.dump(documents_data, f, ensure_ascii=False, indent=2)
+        
+        print(f"文档保存到: {save_path}, 共{len(documents_data)}个文档")
+    
+    def print_documents(self, documents: List[Any], max_docs: int = 5, max_content_len: int = 200):
+        """整齐打印文档信息"""
+        print(f"\n=== 文档信息汇总 ===")
+        print(f"总文档数: {len(documents)}")
+        print("=" * 50)
+        
+        # 限制打印的文档数量
+        docs_to_print = documents[:max_docs]
+        
+        for i, doc in enumerate(docs_to_print):
+            print(f"\n文档 {i+1}/{len(documents)}:")
+            print(f"源文件: {doc.metadata.get('source', '未知')}")
+            print(f"内容长度: {len(doc.page_content)} 字符")
+            
+            # 打印内容预览
+            content_preview = doc.page_content[:max_content_len]
+            if len(doc.page_content) > max_content_len:
+                content_preview += "..."
+            
+            print("内容预览:")
+            print("-" * 40)
+            print(content_preview)
+            print("-" * 40)
+        
+        if len(documents) > max_docs:
+            print(f"\n... 还有 {len(documents) - max_docs} 个文档未显示 ...")
+        print("\n=== 文档信息结束 ===")
     
     def create_vector_store(self, documents: List[Any], store_path: str = None):
         """创建向量存储"""
@@ -198,19 +306,24 @@ def main():
     # 加载Excel文档
     data_path = "../cigaratte_data.xlsx"  # 假设Excel文件在data目录
     documents = rag.load_documents(data_path)
+    # 保存文档
+    save_path = "../saved_documents/documents.json"
+    # rag.save_documents(documents, save_path)
+    # rag.print_documents(documents)    
     
     # 分割文档
     split_docs = rag.split_documents(documents)
+    print(f'split_docs: {split_docs}')
     
     # 创建向量存储
     store_path = "../vector_store"
     # rag.create_vector_store(split_docs, store_path)
     
     # 示例使用
-    query = "卷烟知识库的主要功能是什么？"
-    answer = rag.rag_pipeline(query)
-    print(f"\n查询: {query}")
-    print(f"回答: {answer}")
+    # query = "卷烟知识库的主要功能是什么？"
+    # answer = rag.rag_pipeline(query)
+    # print(f"\n查询: {query}")
+    # print(f"回答: {answer}")
 
 
 if __name__ == "__main__":
