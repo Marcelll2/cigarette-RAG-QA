@@ -345,10 +345,10 @@ def main():
     rag.create_vector_store(split_docs, store_path)
     
     # 示例使用
-    # query = "卷烟知识库的主要功能是什么？"
-    # answer = rag.rag_pipeline(query)
-    # print(f"\n查询: {query}")
-    # print(f"回答: {answer}")
+    query = "卷烟知识库的主要功能是什么？"
+    answer = rag.rag_pipeline(query)
+    print(f"\n查询: {query}")
+    print(f"回答: {answer}")
 
 
 if __name__ == "__main__":
