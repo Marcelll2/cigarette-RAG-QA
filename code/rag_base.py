@@ -83,17 +83,29 @@ class BasicRAG:
                         df = pd.read_excel(excel_file, sheet_name=sheet_name)
                         # 按行创建文档
                         for idx, row in df.iterrows():
-                            # 将行转换为字符串
-                            row_content = "\t".join([f"{col}: {val}" for col, val in row.items() if pd.notna(val)])
+                            # 提取关键字段到 metadata
+                            metadata = {
+                                "source": excel_file,
+                                "sheet": sheet_name,
+                                "row": idx + 2  # +2 因为Excel行号从1开始，且有表头
+                            }
+                            
+                            # 将除了 INTRODUCTION 之外的字段添加到 metadata
+                            content_parts = []
+                            for col, val in row.items():
+                                if pd.notna(val):
+                                    col_lower = col.lower()
+                                    content_parts.append(f"{col}: {val}")
+                                    # 跳过 INTRODUCTION 字段
+                                    if "introduction" not in col_lower:
+                                        metadata[col_lower] = val
+                            
+                            row_content = "\n".join(content_parts)
                             if row_content.strip():
                                 # 创建文档对象
                                 doc = Document(
                                     page_content=row_content.strip(),
-                                    metadata={
-                                        "source": excel_file,
-                                        "sheet": sheet_name,
-                                        "row": idx + 2  # +2 因为Excel行号从1开始，且有表头
-                                    }
+                                    metadata=metadata
                                 )
                                 documents.append(doc)
                 except Exception as e:
@@ -114,16 +126,29 @@ class BasicRAG:
                         # 按行创建文档
                         for idx, row in df.iterrows():
                             # 将行转换为字符串
-                            row_content = "\t".join([f"{col}: {val}" for col, val in row.items() if pd.notna(val)])
+                            # 提取关键字段到 metadata
+                            metadata = {
+                                "source": data_path,
+                                "sheet": sheet_name,
+                                "row": idx + 2  # +2 因为Excel行号从1开始，且有表头
+                            }
+                            
+                            # 将除了 INTRODUCTION 之外的字段添加到 metadata
+                            content_parts = []
+                            for col, val in row.items():
+                                if pd.notna(val):
+                                    col_lower = col.lower()
+                                    content_parts.append(f"{col}: {val}")
+                                    # 跳过 INTRODUCTION 字段
+                                    if "introduction" not in col_lower:
+                                        metadata[col_lower] = val
+                            
+                            row_content = "\n".join(content_parts)
                             if row_content.strip():
                                 # 创建文档对象
                                 doc = Document(
                                     page_content=row_content.strip(),
-                                    metadata={
-                                        "source": data_path,
-                                        "sheet": sheet_name,
-                                        "row": idx + 2  # +2 因为Excel行号从1开始，且有表头
-                                    }
+                                    metadata=metadata
                                 )
                                 documents.append(doc)
                 except Exception as e:
@@ -307,17 +332,17 @@ def main():
     data_path = "../cigaratte_data.xlsx"  # 假设Excel文件在data目录
     documents = rag.load_documents(data_path)
     # 保存文档
-    save_path = "../saved_documents/documents.json"
-    # rag.save_documents(documents, save_path)
+    # rag.save_documents(documents, ../saved_documents/documents.json)
     # rag.print_documents(documents)    
     
     # 分割文档
     split_docs = rag.split_documents(documents)
-    print(f'split_docs: {split_docs}')
+    # rag.save_documents(split_docs, "../saved_documents/split_docs.json")
+    # print(f'split_docs: {split_docs}')
     
     # 创建向量存储
     store_path = "../vector_store"
-    # rag.create_vector_store(split_docs, store_path)
+    rag.create_vector_store(split_docs, store_path)
     
     # 示例使用
     # query = "卷烟知识库的主要功能是什么？"
