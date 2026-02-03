@@ -3,7 +3,7 @@
         "chunk_size": 1000,
         "chunk_overlap": 200,
         "embedding_model": "BAAI/bge-small-zh-v1.5",
-        "cache_folder": "./embedding_cache",
+        "cache_folder": "embedding_cache",
         "llm_model": "qwen2:0.5b",
         "temperature": 0.1,
         "vector_store_path": "./vector_store",
