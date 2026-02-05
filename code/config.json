@@ -8,7 +8,7 @@
         "temperature": 0.1,
         "vector_store_path": "./vector_store",
         "debug_save_pth": "./debug_save",
-        "use_llm_evaluation": false,
+        "use_llm_evaluation": true,
         "data_path": "../cigaratte_data.xlsx"
     },
     "finetuning_config": {
