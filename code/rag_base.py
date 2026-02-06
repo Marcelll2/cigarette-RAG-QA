@@ -310,6 +310,32 @@ class BasicRAG:
         accuracy = correct / total if total > 0 else 0.0
         return {"accuracy": accuracy}
 
+    def set_embedding_model(self, model_name: str = None, documents = None, store_path: str = None):
+        # !此处代码待验证扩展性和兼容性
+        if model_name is None:
+            model_name = self.config.get("embedding_model", "BAAI/bge-small-zh-v1.5")
+        self.embedding_model = HuggingFaceEmbeddings(
+            model_name=model_name,
+            cache_folder=self.config.get("cache_folder", "./embedding_models")
+        )
+
+        doc_mask = False
+        if documents and not isinstance(documents, list):
+            if isinstance(documents, str):
+                # data_path = "../cigaratte_data.xlsx"
+                documents = self.load_documents(documents)
+                documents = self.split_documents(documents)
+                doc_mask = True
+        else:
+            raise ValueError("documents 必须是文档列表或文档路径")
+        # 如果提供了文档和存储路径，自动重新创建向量库
+        if doc_mask and store_path:
+            store_path = os.path.join(store_path, model_name.replace("/", "_"))
+            self.create_vector_store(documents, store_path)
+            print(f"已使用新的嵌入模型 {model_name} 重新创建向量库")
+        else:
+            print(f"已设置新的嵌入模型 {model_name}，请注意：需要重新创建向量库以确保兼容性")
+    
 
 def main():
     """主函数"""
@@ -342,6 +368,7 @@ def main():
     
     # 创建向量存储
     store_path = "../vector_store"
+    store_path = os.path.join(store_path, config["embedding_model"].replace("/", "_"))
     rag.create_vector_store(split_docs, store_path)
     
     # 示例使用

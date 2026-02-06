@@ -11,6 +11,7 @@ import os
 from typing import List, Dict, Any
 from rag_base import BasicRAG
 from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
 
 
 class RAGFinetuner:
@@ -26,15 +27,15 @@ class RAGFinetuner:
         # 从配置中读取是否使用LLM评估的超参数
         self.use_llm_evaluation = base_config.get("use_llm_evaluation", False)
         # 存储最佳参数
-        self.best_retrieval_params = None
-        self.best_prompt = None
-        self.best_chunking = None
-        self.best_embedding = None
+        self.best_retrieval_params: Dict[str, Any] = None
+        self.best_prompt: str = None
+        self.best_chunking: Dict[str, int] = None
+        self.best_embedding: Dict[str, Any] = None
         
         if data_path:
             self._prepare_vector_store()
         
-    def tune_retrieval_params(self, test_queries: List[str], param_grid: Dict[str, List[Any]]) -> Dict[str, Any]:
+    def tune_retrieval_params(self, test_queries: List[str], param_grid: Dict[str, List[Any]]) -> None:
         """微调检索参数"""
         print("\n=== 微调检索参数 ===")
         
@@ -42,12 +43,12 @@ class RAGFinetuner:
         param_names = list(param_grid.keys())
         param_combinations = list(itertools.product(*param_grid.values()))
         
-        best_params = None
-        best_score = 0.0
+        best_params: Dict[str, Any] = None
+        best_score: float = 0.0
         
         for i, params in enumerate(param_combinations):
             # 创建当前参数配置
-            current_params = dict(zip(param_names, params))
+            current_params: Dict[str, Any] = dict(zip(param_names, params))
             print(f"\n测试组合 {i+1}/{len(param_combinations)}: {current_params}")
             
             # 测试当前参数
@@ -65,10 +66,8 @@ class RAGFinetuner:
         print(f"\n最佳检索参数: {best_params}")
         print(f"最佳分数: {best_score}")
         
-        # 存储最佳分割参数
-        self.best_chunking = best_params
-        
-        return best_params
+        # 存储最佳检索参数
+        self.best_retrieval_params = best_params
     
     def _prepare_vector_store(self):
         """准备向量存储"""
@@ -126,7 +125,7 @@ class RAGFinetuner:
             
             try:
                 # 执行实际检索
-                retrieved_docs = self.rag.retrieve(query, k=k)
+                retrieved_docs: List[Any] = self.rag.retrieve(query, k=k)
                 
                 if not retrieved_docs:
                     print(f"警告：查询 '{query}' 未检索到任何文档")
@@ -154,7 +153,7 @@ class RAGFinetuner:
         # FAISS similarity_search_with_relevance_scores 可以返回相似度分数
         try:
             # 使用带相似度分数的检索
-            docs_with_scores = self.rag.vector_store.similarity_search_with_relevance_scores(
+            docs_with_scores: List[tuple[Document, float]] = self.rag.vector_store.similarity_search_with_relevance_scores(
                 query, 
                 k=len(retrieved_docs)
             )
@@ -206,12 +205,12 @@ class RAGFinetuner:
         
         return total_score / len(test_queries)
     
-    def optimize_prompt_template(self, test_cases: List[Dict[str, str]], prompt_candidates: List[str]) -> str:
+    def optimize_prompt_template(self, test_cases: List[Dict[str, str]], prompt_candidates: List[str]) -> None:
         """优化提示模板"""
         print("\n=== 优化提示模板 ===")
         
-        best_prompt = None
-        best_score = 0.0
+        best_prompt: str = None
+        best_score: float = 0.0
         
         for i, prompt in enumerate(prompt_candidates):
             print(f"\n测试提示模板 {i+1}/{len(prompt_candidates)}:")
@@ -238,8 +237,6 @@ class RAGFinetuner:
         
         # 存储最佳提示模板
         self.best_prompt = best_prompt
-        
-        return best_prompt
     
     def _evaluate_prompt(self, test_cases: List[Dict[str, str]], prompt: str) -> float:
         """评估提示模板效果"""
@@ -312,7 +309,7 @@ class RAGFinetuner:
             else:
                 return 0.0
     
-    def tune_chunking_strategy(self, documents: List[Any] = None, chunking_params: Dict[str, List[int]] = None) -> Dict[str, int]:
+    def tune_chunking_strategy(self, documents: List[Any] = None, chunking_params: Dict[str, List[int]] = None) -> None:
         """微调文本分割策略"""
         print("\n=== 微调文本分割策略 ===")
         
@@ -338,7 +335,7 @@ class RAGFinetuner:
                     if chunk_overlap >= chunk_size:
                         continue
                         
-                    current_params = {
+                    current_params: Dict[str, int] = {
                         "chunk_size": chunk_size,
                         "chunk_overlap": chunk_overlap
                     }
@@ -366,8 +363,6 @@ class RAGFinetuner:
         except Exception as e:
             print(f"微调分割策略时出错: {e}")
             best_params = {"chunk_size": 1000, "chunk_overlap": 200}  # 使用默认值
-        
-        return best_params
     
     def _get_chunking_documents(self) -> List[Any]:
         """获取用于分割策略评估的文档"""
@@ -602,7 +597,9 @@ class RAGFinetuner:
                         
                         try:
                             # 这里应该调用实际的方法来更换嵌入模型
-                            # 例如: self.rag.set_embedding_model(model)
+                            # !待修改：1、document的split逻辑；2、
+                            self.rag.set_embedding_model(model, documents=test_docs, store_path="../vector_store")
+                            #! 待拓展
                             # 由于没有直接的方法，我们使用基于检索效果的评估
                             
                             # 测试嵌入生成时间
@@ -748,14 +745,14 @@ class RAGFinetuner:
         # print(f"最佳分割参数: {self.best_chunking}")        
         
         # 4. 比较嵌入模型
-        # self.compare_embedding_models(
-        #     test_data["embedding_candidates"],
-        #     test_data["test_cases"]
-        # )
+        self.compare_embedding_models(
+            test_data["embedding_candidates"],
+            test_data["test_cases"]
+        )
         # 测试模式：使用默认值
         if self.best_embedding is None:
             print("使用默认嵌入模型 (测试模式)")
-            self.best_embedding = "bge-base-zh"  # 使用一个常见的中文嵌入模型作为默认值
+            self.best_embedding = self.base_config.get("embedding_model", "bge-base-zh")
         else:
             print(f"使用最佳嵌入模型: {self.best_embedding}")
         
