@@ -32,7 +32,7 @@ class RAGFinetuner:
         self.best_chunking: Dict[str, int] = None
         self.best_embedding: Dict[str, Any] = None
         
-        if data_path:
+        if self.data_path:
             self._prepare_vector_store()
         
     def tune_retrieval_params(self, test_queries: List[str], param_grid: Dict[str, List[Any]]) -> None:
@@ -70,46 +70,30 @@ class RAGFinetuner:
         self.best_retrieval_params = best_params
     
     def _prepare_vector_store(self):
-        """准备向量存储"""
-        if not self.data_path:
-            print("警告：未提供数据路径，无法创建向量存储")
-            return
-            
-        try:
+        """准备向量存储"""            
             # 检查是否为现存的向量存储路径
-            if os.path.isdir(self.data_path) and any(
-                os.path.exists(os.path.join(self.data_path, file)) 
-                for file in ["index.faiss", "index.pkl"]
-            ):
-                # 使用现存的向量存储
-                print(f"使用现存的向量存储: {self.data_path}")
-                self.rag.vector_store = FAISS.load_local(
-                    self.data_path,
-                    self.rag.embedding_model,
-                    allow_dangerous_deserialization=True
-                )
-                self.vector_store_ready = True
-                print("现存向量存储加载完成")
-                return
-            
-            # 否则，视为原始数据集路径
-            print(f"处理原始数据集: {self.data_path}")
-            
-            # 加载文档
-            documents = self.rag.load_documents(self.data_path)
-            
-            # 分割文档
-            split_docs = self.rag.split_documents(documents)
-            
-            # 创建向量存储
-            store_path = "../vector_store"
-            self.rag.create_vector_store(split_docs, store_path)
-            
+        if os.path.isdir(self.data_path) and any(
+            os.path.exists(os.path.join(self.data_path, file)) 
+            for file in ["index.faiss", "index.pkl"]):
+            # 使用现存的向量存储
+            print(f"使用现存的向量存储: {self.data_path}")
+            self.rag.vector_store = FAISS.load_local(
+                self.data_path,
+                self.rag.embedding_model,
+                allow_dangerous_deserialization=True
+            )
             self.vector_store_ready = True
-            print("向量存储准备完成")
-        except Exception as e:
-            print(f"准备向量存储时出错: {e}")
-            self.vector_store_ready = False
+            print("现存向量存储加载完成")
+            return      
+        # 加载文档
+        documents = self.rag.load_documents(self.data_path)        
+        # 分割文档
+        split_docs = self.rag.split_documents(documents)        
+        # 创建向量存储
+        store_path = "../vector_store"
+        self.rag.create_vector_store(split_docs, store_path)        
+        self.vector_store_ready = True
+        print("向量存储准备完成")
     
     def _evaluate_retrieval(self, test_queries: List[str], params: Dict[str, Any]) -> float:
         """评估检索效果"""
@@ -540,177 +524,10 @@ class RAGFinetuner:
         return default_docs
     
     def compare_embedding_models(self, model_candidates: List[str], test_data: List[Dict[str, str]]) -> str:
-        """比较不同的嵌入模型"""
-        print("\n=== 比较嵌入模型 ===")
-        
-        best_model = None
-        best_score = 0.0
-        
-        for model in model_candidates:
-            print(f"\n测试嵌入模型: {model}")
-            
-            # 测试当前模型
-            current_score = self._evaluate_embedding_model(model, test_data)
-            
-            print(f"模型分数: {current_score}")
-            
-            # 更新最佳模型
-            if current_score > best_score:
-                best_score = current_score
-                best_model = model
-        
-        print(f"\n最佳嵌入模型: {best_model}")
-        print(f"最佳分数: {best_score}")
-        
-        # 存储最佳嵌入模型
-        self.best_embedding = best_model
-        
-        return best_model
+        pass
     
     def _evaluate_embedding_model(self, model: str, test_data: List[Dict[str, str]]) -> float:
-        """评估嵌入模型效果"""
-        try:
-            print(f"评估嵌入模型: {model}")
-            
-            # 1. 测试模型加载时间和内存使用
-            import time
-            import psutil
-            import os
-            
-            start_time = time.time()
-            start_memory = psutil.Process(os.getpid()).memory_info().rss / 1024 / 1024  # MB
-            
-            # 2. 尝试创建模型实例并生成嵌入
-            try:
-                # 使用测试数据中的查询来评估嵌入质量
-                test_queries = [item.get("query", "") for item in test_data if item.get("query")]
-                
-                if test_queries:
-                    # 3. 尝试使用实际的检索测试
-                    if self.vector_store_ready:
-                        print(f"使用实际检索测试评估模型: {model}")
-                        
-                        # 临时更换嵌入模型
-                        original_embedding = None
-                        if hasattr(self.rag, "embedding_model"):
-                            original_embedding = self.rag.embedding_model
-                        
-                        try:
-                            # 这里应该调用实际的方法来更换嵌入模型
-                            # !待修改：1、document的split逻辑；2、
-                            self.rag.set_embedding_model(model, documents=test_docs, store_path="../vector_store")
-                            #! 待拓展
-                            # 由于没有直接的方法，我们使用基于检索效果的评估
-                            
-                            # 测试嵌入生成时间
-                            embed_start = time.time()
-                            
-                            # 使用现有的检索评估方法
-                            # 这里我们使用默认的检索参数
-                            default_params = {"k": 3, "similarity_threshold": 0.7}
-                            retrieval_score = self._evaluate_retrieval(test_queries, default_params)
-                            
-                            embed_time = time.time() - embed_start
-                            
-                            # 4. 评估计算效率
-                            total_time = time.time() - start_time
-                            end_memory = psutil.Process(os.getpid()).memory_info().rss / 1024 / 1024  # MB
-                            memory_used = end_memory - start_memory
-                            
-                            # 效率评分 (0-0.3)
-                            efficiency_score = 0.3
-                            if total_time > 5:
-                                efficiency_score -= 0.1
-                            if memory_used > 500:
-                                efficiency_score -= 0.1
-                            if memory_used > 1000:
-                                efficiency_score -= 0.1
-                            
-                            # 5. 综合评分
-                            # 检索效果占70%，效率占30%
-                            final_score = retrieval_score * 0.7 + efficiency_score
-                            
-                            print(f"模型 {model} 评估结果:")
-                            print(f"  检索分数: {retrieval_score:.2f}")
-                            print(f"  效率分数: {efficiency_score:.2f}")
-                            print(f"  总评分: {final_score:.2f}")
-                            print(f"  耗时: {total_time:.2f}秒")
-                            print(f"  内存使用: {memory_used:.2f}MB")
-                            
-                            return final_score
-                            
-                        except Exception as e:
-                            print(f"使用实际检索测试时出错: {e}")
-                            # 出错时回退到基于模型特性的评分
-                            pass
-                        finally:
-                            # 恢复原始嵌入模型
-                            if original_embedding and hasattr(self.rag, "set_embedding_model"):
-                                try:
-                                    self.rag.set_embedding_model(original_embedding)
-                                except:
-                                    pass
-                    
-                    # 4. 如果无法使用实际检索测试，基于模型特性评分
-                    print(f"使用模型特性评估模型: {model}")
-                    
-                    # 基于模型大小和类型的评分
-                    base_score = 0.0
-                    if "large" in model.lower():
-                        base_score = 0.8
-                    elif "base" in model.lower() or "medium" in model.lower():
-                        base_score = 0.7
-                    elif "small" in model.lower():
-                        base_score = 0.6
-                    else:
-                        base_score = 0.5
-                    
-                    # 考虑模型的计算效率
-                    total_time = time.time() - start_time
-                    end_memory = psutil.Process(os.getpid()).memory_info().rss / 1024 / 1024  # MB
-                    memory_used = end_memory - start_memory
-                    
-                    # 效率评分 (0-0.2)
-                    efficiency_score = 0.2
-                    if total_time > 3:
-                        efficiency_score -= 0.05
-                    if total_time > 6:
-                        efficiency_score -= 0.05
-                    if memory_used > 300:
-                        efficiency_score -= 0.05
-                    if memory_used > 600:
-                        efficiency_score -= 0.05
-                    
-                    # 综合评分
-                    final_score = base_score * 0.8 + efficiency_score
-                    
-                    print(f"模型 {model} 评估结果:")
-                    print(f"  基础分数: {base_score:.2f}")
-                    print(f"  效率分数: {efficiency_score:.2f}")
-                    print(f"  总评分: {final_score:.2f}")
-                    print(f"  耗时: {total_time:.2f}秒")
-                    print(f"  内存使用: {memory_used:.2f}MB")
-                    
-                    return final_score
-                else:
-                    # 没有测试查询，使用基于模型大小的评分
-                    if "large" in model.lower():
-                        return 0.8
-                    elif "base" in model.lower() or "medium" in model.lower():
-                        return 0.7
-                    elif "small" in model.lower():
-                        return 0.6
-                    else:
-                        return 0.5
-            except Exception as e:
-                print(f"测试模型时出错: {e}")
-                # 出错时返回较低分数
-                return 0.3
-                
-        except Exception as e:
-            print(f"评估嵌入模型时出错: {e}")
-            # 严重错误时返回最低分数
-            return 0.2
+        pass
     
     def run_full_finetuning(self, test_data: Dict[str, Any]) -> Dict[str, Any]:
         """运行完整的微调流程"""
@@ -809,7 +626,10 @@ def main():
         }
     
     # 数据路径（用于实际检索）
+    # 原始数据路径
     data_path = config.get("base_config", {}).get("data_path", "../cigaratte_data.xlsx")
+    # 向量存储路径
+    # vector_data_path = config.get("base_config", {}).get("vector_data_path", "../vector_store")
     
     # 创建微调器实例，传入数据路径以启用实际检索
     finetuner = RAGFinetuner(base_config, data_path=data_path)

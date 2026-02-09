@@ -227,28 +227,15 @@ class BasicRAG:
         print("\n=== 文档信息结束 ===")
     
     def create_vector_store(self, documents: List[Any], store_path: str = None):
-        """创建向量存储"""
-        import os
-        
-        if store_path and os.path.exists(store_path):
-            # 加载现有向量库
-            self.vector_store = FAISS.load_local(
-                store_path,
-                self.embedding_model,
-                allow_dangerous_deserialization=True
-            )
-            print(f"加载现有向量库: {store_path}")
-        else:
-            # 创建新向量库
-            self.vector_store = FAISS.from_documents(
-                documents,
-                self.embedding_model
-            )
-            # 保存向量库
-            if store_path:
-                self.vector_store.save_local(store_path)
-                print(f"向量库保存到: {store_path}")
-        
+        if not documents:
+            raise ValueError("文档列表为空")
+        self.vector_store = FAISS.from_documents(
+            documents,
+            self.embedding_model)
+        # 保存向量库
+        store_path_ = os.path.join(store_path, self.embedding_model.model_name.replace("/", "_"))
+        self.vector_store.save_local(store_path_)
+        print(f"向量库保存到: {store_path_}")
         print(f"创建向量存储完成，文档数量: {len(documents)}")
     
     def retrieve(self, query: str, k: int = 3) -> List[Any]:
@@ -284,7 +271,6 @@ class BasicRAG:
         """完整的RAG流水线"""
         # 检索相关文档
         retrieved_docs = self.retrieve(query, k=k)
-        
         # 生成回答
         answer = self.generate_answer(query, retrieved_docs)
         
@@ -310,32 +296,18 @@ class BasicRAG:
         accuracy = correct / total if total > 0 else 0.0
         return {"accuracy": accuracy}
 
-    def set_embedding_model(self, model_name: str = None, documents = None, store_path: str = None):
+    def set_embedding_model(self, model_name: str = None):
         # !此处代码待验证扩展性和兼容性
+        origin_embedding_model = self.embedding_model
         if model_name is None:
-            model_name = self.config.get("embedding_model", "BAAI/bge-small-zh-v1.5")
+            raise ValueError("model_name 不能为空")
+        if model_name == origin_embedding_model.model_name:
+            raise ValueError(f"模型 {model_name} 与当前模型相同，无需切换")
+            
         self.embedding_model = HuggingFaceEmbeddings(
             model_name=model_name,
             cache_folder=self.config.get("cache_folder", "./embedding_models")
         )
-
-        doc_mask = False
-        if documents and not isinstance(documents, list):
-            if isinstance(documents, str):
-                # data_path = "../cigaratte_data.xlsx"
-                documents = self.load_documents(documents)
-                documents = self.split_documents(documents)
-                doc_mask = True
-        else:
-            raise ValueError("documents 必须是文档列表或文档路径")
-        # 如果提供了文档和存储路径，自动重新创建向量库
-        if doc_mask and store_path:
-            store_path = os.path.join(store_path, model_name.replace("/", "_"))
-            self.create_vector_store(documents, store_path)
-            print(f"已使用新的嵌入模型 {model_name} 重新创建向量库")
-        else:
-            print(f"已设置新的嵌入模型 {model_name}，请注意：需要重新创建向量库以确保兼容性")
-    
 
 def main():
     """主函数"""
@@ -345,7 +317,8 @@ def main():
         "chunk_overlap": 200,
         "embedding_model": "BAAI/bge-small-zh-v1.5",
         "llm_model": "qwen2:0.5b",
-        "temperature": 0.1
+        "temperature": 0.1,
+        "vector_store_path": "../vector_store/BAAI_bge-small-zh-v1.5"
     }
     
     # 创建RAG实例
@@ -367,9 +340,17 @@ def main():
     # print(f'split_docs: {split_docs}')
     
     # 创建向量存储
-    store_path = "../vector_store"
-    store_path = os.path.join(store_path, config["embedding_model"].replace("/", "_"))
-    rag.create_vector_store(split_docs, store_path)
+    if not os.path.exists(config["vector_store_path"]):
+        print(f"重新创建向量存储: {config['vector_store_path']}")
+        store_path = "../vector_store"
+        # store_path = os.path.join(store_path, config["embedding_model"].replace("/", "_"))
+        rag.create_vector_store(split_docs, store_path)
+    else:
+        print(f"使用现存的向量存储: {config['vector_store_path']}")
+        rag.vector_store = FAISS.load_local(
+            config["vector_store_path"],
+            rag.embedding_model,
+            allow_dangerous_deserialization=True)
     
     # 示例使用
     query = "卷烟知识库的主要功能是什么？"
