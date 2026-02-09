@@ -46,7 +46,7 @@ class BasicRAG:
         # 初始化嵌入模型
         self.embedding_model = HuggingFaceEmbeddings(
             model_name=self.config.get("embedding_model", "BAAI/bge-small-zh-v1.5"),
-            cache_folder=self.config.get("cache_folder", "./embedding_cache")
+            cache_folder=self.config.get("cache_folder", f"embedding_cache/{self.config['embedding_model'].replace('/', '_')}")
         )
         
         # 初始化LLM
