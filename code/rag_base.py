@@ -26,7 +26,6 @@ from langchain_ollama import OllamaLLM
 
 class BasicRAG:
     """基础RAG类"""
-    
     def __init__(self, config: Dict[str, Any]):
         """初始化RAG系统"""
         self.config = config
@@ -39,20 +38,21 @@ class BasicRAG:
         """初始化各个组件"""
         # 初始化文本分割器
         self.text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=self.config.get("chunk_size", 1000),
-            chunk_overlap=self.config.get("chunk_overlap", 200)
+            chunk_size=self.config["base_config"]["chunk_size"],
+            chunk_overlap=self.config["base_config"]["chunk_overlap"]
         )
         
         # 初始化嵌入模型
         self.embedding_model = HuggingFaceEmbeddings(
-            model_name=self.config.get("embedding_model", "BAAI/bge-small-zh-v1.5"),
-            cache_folder=self.config.get("cache_folder", f"embedding_cache/{self.config['embedding_model'].replace('/', '_')}")
+            model_name=self.config["base_config"]["embedding_model"],
+            cache_folder=self.config["base_config"]["cache_folder"]  # 保留get，因为cache_folder是可选的
         )
         
         # 初始化LLM
         self.llm = OllamaLLM(
-            model=self.config.get("llm_model", "qwen2:0.5b"),
-            temperature=self.config.get("temperature", 0.1)
+            model=self.config["base_config"]["llm_model"],
+            temperature=self.config["base_config"]["temperature"],
+            cache_folder=self.config["base_config"]["llm_cache"]  # 保留get，因为llm_cache是可选的
         )
         
         print("RAG组件初始化完成")
@@ -245,6 +245,11 @@ class BasicRAG:
         
         docs = self.vector_store.similarity_search(query, k=k)
         print(f"检索查询: {query}, 找到{len(docs)}个相关文档")
+
+        if self.config["base_config"]["show_retrieved_docs"]:
+            print(f"相关文档内容预览:")
+            for doc in docs:
+                print(f"- {doc.page_content[:50]}...")
         return docs
     
     def generate_answer(self, query: str, retrieved_docs: List[Any]) -> str:
@@ -297,7 +302,6 @@ class BasicRAG:
         return {"accuracy": accuracy}
 
     def set_embedding_model(self, model_name: str = None):
-        # !此处代码待验证扩展性和兼容性
         origin_embedding_model = self.embedding_model
         if model_name is None:
             raise ValueError("model_name 不能为空")
@@ -306,20 +310,19 @@ class BasicRAG:
             
         self.embedding_model = HuggingFaceEmbeddings(
             model_name=model_name,
-            cache_folder=self.config.get("cache_folder", "./embedding_models")
+            cache_folder=self.config["base_config"]["cache_folder"]  # 保留get，因为cache_folder是可选的
         )
+
+def load_config(config_path: str) -> Dict[str, Any]:
+    """从文件加载配置"""
+    with open(config_path, 'r', encoding='utf-8') as f:
+        return json.load(f)
 
 def main():
     """主函数"""
-    # 配置参数
-    config = {
-        "chunk_size": 1000,
-        "chunk_overlap": 200,
-        "embedding_model": "BAAI/bge-small-zh-v1.5",
-        "llm_model": "qwen2:0.5b",
-        "temperature": 0.1,
-        "vector_store_path": "../vector_store/BAAI_bge-small-zh-v1.5"
-    }
+    # 从文件加载配置
+    config_path = "config.json"
+    config = load_config(config_path)
     
     # 创建RAG实例
     rag = BasicRAG(config)
@@ -328,33 +331,32 @@ def main():
     rag.init_components()
     
     # 加载Excel文档
-    data_path = "../cigaratte_data.xlsx"  # 假设Excel文件在data目录
-    documents = rag.load_documents(data_path)
+    documents = rag.load_documents(config["base_config"]["data_path"])
     # 保存文档
     # rag.save_documents(documents, ../saved_documents/documents.json)
     # rag.print_documents(documents)    
     
     # 分割文档
     split_docs = rag.split_documents(documents)
-    # rag.save_documents(split_docs, "../saved_documents/split_docs.json")
+    rag.save_documents(split_docs, os.path.join(config["base_config"]["save_docs_path"], "split_docs.json"))
     # print(f'split_docs: {split_docs}')
     
     # 创建向量存储
-    if not os.path.exists(config["vector_store_path"]):
-        print(f"重新创建向量存储: {config['vector_store_path']}")
-        store_path = "../vector_store"
-        # store_path = os.path.join(store_path, config["embedding_model"].replace("/", "_"))
-        rag.create_vector_store(split_docs, store_path)
+    if not os.path.exists(config["base_config"]["vector_store_path"]):
+        print(f"重新创建向量存储: {config['base_config']['vector_store_path']}")
+        rag.create_vector_store(split_docs, config["base_config"]["vector_store_path"])
     else:
-        print(f"使用现存的向量存储: {config['vector_store_path']}")
+        print(f"使用现存的向量存储: {config['base_config']['vector_store_path']}")
+        store_path = config["base_config"]["vector_store_path"]
+        full_store_path = os.path.join(store_path, rag.embedding_model.model_name.replace("/", "_"))
         rag.vector_store = FAISS.load_local(
-            config["vector_store_path"],
+            full_store_path, 
             rag.embedding_model,
             allow_dangerous_deserialization=True)
     
     # 示例使用
-    query = "卷烟知识库的主要功能是什么？"
-    answer = rag.rag_pipeline(query)
+    query = "双喜品牌的卷烟产品有哪些？"
+    answer = rag.rag_pipeline(query, k=config["base_config"]["retrieval_k"])
     print(f"\n查询: {query}")
     print(f"回答: {answer}")
 

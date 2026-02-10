@@ -16,24 +16,22 @@ from langchain_core.documents import Document
 
 class RAGFinetuner:
     """RAG微调类"""
-    
-    def __init__(self, base_config: Dict[str, Any], data_path: str = None):
+    def __init__(self, config: Dict[str, Any], data_path: str = None):
         """初始化微调器"""
-        self.base_config = base_config
-        self.rag = BasicRAG(base_config)
+        self.config = config
+        self.rag = BasicRAG(self.config)
         self.rag.init_components()
         self.data_path = data_path
         self.vector_store_ready = False
         # 从配置中读取是否使用LLM评估的超参数
-        self.use_llm_evaluation = base_config.get("use_llm_evaluation", False)
+        self.use_llm_evaluation = self.config["base_config"]["use_llm_evaluation"]
         # 存储最佳参数
         self.best_retrieval_params: Dict[str, Any] = None
         self.best_prompt: str = None
         self.best_chunking: Dict[str, int] = None
         self.best_embedding: Dict[str, Any] = None
         
-        if self.data_path:
-            self._prepare_vector_store()
+        self._prepare_vector_store()
         
     def tune_retrieval_params(self, test_queries: List[str], param_grid: Dict[str, List[Any]]) -> None:
         """微调检索参数"""
@@ -52,8 +50,6 @@ class RAGFinetuner:
             print(f"\n测试组合 {i+1}/{len(param_combinations)}: {current_params}")
             
             # 测试当前参数
-            # 这里应该使用实际的评估指标，如相关性评分
-            # 简化示例：使用固定分数
             current_score = self._evaluate_retrieval(test_queries, current_params)
             
             print(f"组合分数: {current_score}")
@@ -70,30 +66,34 @@ class RAGFinetuner:
         self.best_retrieval_params = best_params
     
     def _prepare_vector_store(self):
-        """准备向量存储"""            
-            # 检查是否为现存的向量存储路径
-        if os.path.isdir(self.data_path) and any(
-            os.path.exists(os.path.join(self.data_path, file)) 
-            for file in ["index.faiss", "index.pkl"]):
+        """准备向量存储"""
+            
+        # 计算完整的向量存储路径
+        store_path = self.config["base_config"]["vector_store_path"]
+        full_store_path = os.path.join(store_path, self.rag.embedding_model.model_name.replace("/", "_"))
+        
+        # 检查是否为现存的向量存储路径
+        if os.path.isdir(full_store_path) and any(os.path.exists(os.path.join(full_store_path, file)) for file in ["index.faiss", "index.pkl"]):
             # 使用现存的向量存储
-            print(f"使用现存的向量存储: {self.data_path}")
+            print(f"使用现存的向量存储: {full_store_path}")
             self.rag.vector_store = FAISS.load_local(
-                self.data_path,
+                full_store_path,
                 self.rag.embedding_model,
                 allow_dangerous_deserialization=True
             )
             self.vector_store_ready = True
-            print("现存向量存储加载完成")
-            return      
-        # 加载文档
-        documents = self.rag.load_documents(self.data_path)        
-        # 分割文档
-        split_docs = self.rag.split_documents(documents)        
-        # 创建向量存储
-        store_path = "../vector_store"
-        self.rag.create_vector_store(split_docs, store_path)        
-        self.vector_store_ready = True
-        print("向量存储准备完成")
+            print("现有向量存储加载完成")
+        else:
+            # 加载文档
+            documents = self.rag.load_documents(self.config["base_config"]["data_path"])
+            # 分割文档
+            split_docs = self.rag.split_documents(documents)
+            # 创建向量存储
+            self.rag.create_vector_store(
+                documents=split_docs, 
+                store_path=full_store_path)
+            self.vector_store_ready = True
+            print("新向量创建备完成")
     
     def _evaluate_retrieval(self, test_queries: List[str], params: Dict[str, Any]) -> float:
         """评估检索效果"""
@@ -101,70 +101,50 @@ class RAGFinetuner:
             print("警告：向量存储未就绪，使用模拟评估")
             return self._simulate_retrieval(test_queries, params)
         
-        total_score = 0.0
-        
+        total_score = 0.0        
         for query in test_queries:
-            k = params.get("k", 3)
-            similarity_threshold = params.get("similarity_threshold", 0.7)
-            
-            try:
-                # 执行实际检索
-                retrieved_docs: List[Any] = self.rag.retrieve(query, k=k)
-                
-                if not retrieved_docs:
-                    print(f"警告：查询 '{query}' 未检索到任何文档")
-                    total_score += 0.0
-                    continue
-                
-                # 评估检索质量
-                query_score = self._calculate_retrieval_score(
-                    query, 
-                    retrieved_docs, 
-                    similarity_threshold
-                )
-                
-                total_score += query_score
-                
-            except Exception as e:
-                print(f"检索查询 '{query}' 时出错: {e}")
+            k = params["k"]
+            similarity_threshold = params["similarity_threshold"]                        
+            retrieved_docs: List[Any] = self.rag.retrieve(query, k=k)            
+            if not retrieved_docs:
+                print(f"警告：查询 '{query}' 未检索到任何文档")
                 total_score += 0.0
-        
+                continue
+            
+            # 评估检索质量
+            query_score = self._calculate_retrieval_score(
+                query, 
+                retrieved_docs, 
+                similarity_threshold
+            )            
+            total_score += query_score        
         return total_score / len(test_queries)
     
     def _calculate_retrieval_score(self, query: str, retrieved_docs: List[Any], similarity_threshold: float) -> float:
         """计算检索得分"""
-        # 获取检索文档的相似度分数（如果可用）
         # FAISS similarity_search_with_relevance_scores 可以返回相似度分数
-        try:
-            # 使用带相似度分数的检索
-            docs_with_scores: List[tuple[Document, float]] = self.rag.vector_store.similarity_search_with_relevance_scores(
-                query, 
-                k=len(retrieved_docs)
-            )
-            
-            total_score = 0.0
-            valid_docs = 0
-            
-            for doc, score in docs_with_scores:
-                # print(f"文档内容: \n{doc.page_content[:50]}... \n相似度分数: {score:.4f}\n")
-                if score >= similarity_threshold:
-                    total_score += score
-                    valid_docs += 1
-                else:
-                    # 低于阈值的文档得分减半
-                    total_score += score * 0.5
-                    valid_docs += 1
-            # print(f'')
-            
-            # 归一化得分
-            if valid_docs > 0:
-                return min(1.0, total_score / valid_docs)
-            return 0.0
-            
-        except Exception as e:
-            print(f"计算相似度分数时出错: {e}")
-            # 回退到基于文档数量的简单评分
-            return min(1.0, len(retrieved_docs) / 5.0)
+        docs_with_scores: List[tuple[Document, float]] = self.rag.vector_store.similarity_search_with_relevance_scores(
+            query, 
+            k=len(retrieved_docs)
+        )
+        
+        total_score = 0.0
+        valid_docs = 0
+        
+        for doc, score in docs_with_scores:
+            # print(f"文档内容: \n{doc.page_content[:50]}... \n相似度分数: {score:.4f}\n")
+            if score >= similarity_threshold:
+                total_score += score
+                valid_docs += 1
+            else:
+                # 低于阈值的文档得分减半
+                total_score += score * 0.5
+                valid_docs += 1
+        
+        # 归一化得分
+        if valid_docs > 0:
+            return min(1.0, total_score / valid_docs)
+        return 0.0
     
     def _simulate_retrieval(self, test_queries: List[str], params: Dict[str, Any]) -> float:
         """模拟检索效果（当向量存储不可用时）"""
@@ -534,14 +514,14 @@ class RAGFinetuner:
         print("\n=== 开始完整的RAG微调流程 ===")
         
         # 1. 微调检索参数
-        # self.tune_retrieval_params(
-        #     test_data["test_queries"],
-        #     test_data["retrieval_param_grid"]
-        # )
+        self.tune_retrieval_params(
+            test_data["test_queries"],
+            self.config["finetuning_config"]["retrieval_param_grid"]
+        )
         # 测试模式：使用默认值
-        if self.best_retrieval_params is None:
-            print("使用默认检索参数 (测试模式)")
-            self.best_retrieval_params = {"k": 3, "similarity_threshold": 0.7}
+        # if self.best_retrieval_params is None:
+        #     print("使用默认检索参数 (测试模式)")
+        #     self.best_retrieval_params = {"k": 3, "similarity_threshold": 0.7}
         
         # 2. 优化提示模板
         # self.optimize_prompt_template(
@@ -562,77 +542,45 @@ class RAGFinetuner:
         # print(f"最佳分割参数: {self.best_chunking}")        
         
         # 4. 比较嵌入模型
-        self.compare_embedding_models(
-            test_data["embedding_candidates"],
-            test_data["test_cases"]
-        )
+        # self.compare_embedding_models(
+        #     test_data["embedding_candidates"],
+        #     test_data["test_cases"]
+        # )
         # 测试模式：使用默认值
         if self.best_embedding is None:
             print("使用默认嵌入模型 (测试模式)")
-            self.best_embedding = self.base_config.get("embedding_model", "bge-base-zh")
-        else:
-            print(f"使用最佳嵌入模型: {self.best_embedding}")
+            self.best_embedding = self.config["base_config"]["embedding_model"]
         
         # 整合最佳参数
         best_config = {
             "retrieval_params": self.best_retrieval_params,
             "prompt_template": self.best_prompt,
             "chunking_params": self.best_chunking,
-            "embedding_model": self.best_embedding,
-            **self.base_config
-        }
-        # best_config = {}        
-        
+            "embedding_model": self.best_embedding
+        }     
         print("\n=== 微调完成 ===")
         print(f"最佳配置: {json.dumps(best_config, ensure_ascii=False, indent=2)}")
-        
         return best_config
-
 
 def main():
     """主函数"""
     # 从config.json加载配置
-    config_file = "config.json"
-    
-    try:
-        with open(config_file, 'r', encoding='utf-8') as f:
-            config = json.load(f)
-        
-        # 获取基础配置
-        base_config = config.get("base_config", {})
-        
-        # 获取测试数据
-        test_data = config.get("test_data", {})
-        
-        # 添加微调配置到测试数据
-        finetuning_config = config.get("finetuning_config", {})
-        test_data.update(finetuning_config)
-        
+    config_file = "config.json"    
+    with open(config_file, 'r', encoding='utf-8') as f:
+        config = json.load(f)
         print("配置加载成功")
-        
-    except Exception as e:
-        print(f"加载配置文件时出错: {e}")
-        # 使用默认配置作为后备
-        base_config = {
-            "chunk_size": 1000,
-            "chunk_overlap": 200,
-            "embedding_model": "BAAI/bge-small-zh-v1.5",
-            "llm_model": "qwen2:0.5b",
-            "temperature": 0.1
-        }
-        test_data = {
-            "test_queries": ["卷烟知识库的主要功能是什么？"],
-            "retrieval_param_grid": {"k": [3], "similarity_threshold": [0.7]}
-        }
     
     # 数据路径（用于实际检索）
     # 原始数据路径
-    data_path = config.get("base_config", {}).get("data_path", "../cigaratte_data.xlsx")
+    data_path = config["base_config"]["data_path"]
     # 向量存储路径
-    # vector_data_path = config.get("base_config", {}).get("vector_data_path", "../vector_store")
+    # vector_data_path = config["base_config"]["vector_data_path"]
     
     # 创建微调器实例，传入数据路径以启用实际检索
-    finetuner = RAGFinetuner(base_config, data_path=data_path)
+    finetuner = RAGFinetuner(config, data_path=data_path)
+    
+    # 测试数据
+    test_data = config["test_data"]
     
     # 运行完整微调流程
     best_config = finetuner.run_full_finetuning(test_data)

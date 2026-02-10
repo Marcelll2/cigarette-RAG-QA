@@ -3,13 +3,17 @@
         "chunk_size": 1000,
         "chunk_overlap": 200,
         "embedding_model": "BAAI/bge-small-zh-v1.5",
-        "cache_folder": "./embedding_cache",
+        "cache_folder": "embedding_cache",
         "llm_model": "qwen2:0.5b",
+        "llm_cache": "llm_cache",
         "temperature": 0.1,
-        "vector_store_path": "./vector_store",
-        "debug_save_pth": "./debug_save",
+        "vector_store_path": "vector_store",
+        "debug_save_pth": "debug_save",
         "use_llm_evaluation": true,
-        "data_path": "../cigaratte_data.xlsx"
+        "data_path": "../cigaratte_data.xlsx",
+        "save_docs_path": "saved_documents",
+        "retrieval_k": 3,
+        "show_retrieved_docs": false
     },
     "finetuning_config": {
         "retrieval_param_grid": {
@@ -34,25 +38,24 @@
     },
     "test_data": {
         "test_queries": [
-            "卷烟知识库的主要功能是什么？",
-            "如何使用卷烟知识库进行查询？",
-            "卷烟知识库包含哪些类型的信息？",
-            "卷烟知识库的优势是什么？",
-            "如何更新卷烟知识库？"
+            "五叶神是哪个产地的卷烟",
+            "云南有哪些品牌的卷烟",
+            "焦油含量低于11mg的卷烟有哪些",
+            "广东有什么品牌的卷烟"            
         ],
         "test_cases": [
             {
-                "query": "卷烟知识库的主要功能是什么？",
-                "expected_answer": "卷烟知识库主要用于存储和检索卷烟相关的各类信息，包括产品信息、政策法规、销售数据等。"
+                "query": "双喜品牌的卷烟产品有哪些？",
+                "expected_answer": "双喜品牌的卷烟产品主要有：硬经典 1906、软经典 1906、硬经典、软经典、盛世、经典工坊、硬世纪经典、硬蓝红玫王、软蓝红玫王、硬红五叶神、软红五叶神、硬金五叶神、五叶神金尊。"
             },
             {
-                "query": "如何使用卷烟知识库进行查询？",
-                "expected_answer": "用户可以通过关键词搜索、分类浏览等方式使用卷烟知识库进行查询。"
+                "query": "硬和谐是哪个品牌的，产地是哪里的，有没有介绍",
+                "expected_answer": "硬和谐是玉溪品牌的卷烟，产地为云南。它属于玉溪高端系列，定价约 35 元，主要面向商务人士，焦油量 10mg，烟气带有云南烟叶特有的清香，口感醇厚。"
             },
             {
-                "query": "卷烟知识库包含哪些类型的信息？",
-                "expected_answer": "卷烟知识库包含产品信息、政策法规、销售数据、市场分析等类型的信息。"
-            }
+                "query": "天子（金）和天子（硬珍品龙凤呈祥）属于哪个产地，对比一下",
+                "expected_answer": "两款香烟均产自重庆。天子（金）是天子系列基础款，金色包装简约大气，焦油含量 11mg，是 20 元价位重庆香烟的经典代表；天子（硬珍品龙凤呈祥）以龙凤图案为特色，寓意吉祥，焦油含量同样为 11mg，定价 21 元，更适合作为节庆礼品选用。"
+            }            
         ]
     }
 }

@@ -1,4 +1,3 @@
 code/embedding_cache
-embedding_cache
-vector_store
-saved_documents
+code/vector_store
+code/saved_documents
