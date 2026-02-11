@@ -8,10 +8,12 @@ RAG微调工具
 import json
 import itertools
 import os
+import re
 from typing import List, Dict, Any
 from rag_base import BasicRAG
 from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
+from langchain_core.prompts import PromptTemplate
 
 
 class RAGFinetuner:
@@ -35,7 +37,7 @@ class RAGFinetuner:
         
     def tune_retrieval_params(self, test_queries: List[str], param_grid: Dict[str, List[Any]]) -> None:
         """微调检索参数"""
-        print("\n=== 微调检索参数 ===")
+        print(f"\n=== 微调检索参数 ===")
         
         # 生成所有参数组合
         param_names = list(param_grid.keys())
@@ -51,7 +53,6 @@ class RAGFinetuner:
             
             # 测试当前参数
             current_score = self._evaluate_retrieval(test_queries, current_params)
-            
             print(f"组合分数: {current_score}")
             
             # 更新最佳参数
@@ -60,9 +61,7 @@ class RAGFinetuner:
                 best_params = current_params
         
         print(f"\n最佳检索参数: {best_params}")
-        print(f"最佳分数: {best_score}")
-        
-        # 存储最佳检索参数
+        print(f"最佳分数: {best_score}\n\n\n==============")        
         self.best_retrieval_params = best_params
     
     def _prepare_vector_store(self):
@@ -171,18 +170,17 @@ class RAGFinetuner:
     
     def optimize_prompt_template(self, test_cases: List[Dict[str, str]], prompt_candidates: List[str]) -> None:
         """优化提示模板"""
-        print("\n=== 优化提示模板 ===")
-        
+        print("\n=== 优化提示模板 ===")        
         best_prompt: str = None
         best_score: float = 0.0
         
         for i, prompt in enumerate(prompt_candidates):
             print(f"\n测试提示模板 {i+1}/{len(prompt_candidates)}:")
             print(f"{prompt[:100]}...")
+            print(f"{prompt}...")
             
             # 测试当前提示模板
-            current_score = self._evaluate_prompt(test_cases, prompt)
-            
+            current_score = self._evaluate_prompt(test_cases, prompt)            
             print(f"模板分数: {current_score}")
             
             # 更新最佳提示模板
@@ -197,9 +195,7 @@ class RAGFinetuner:
         
         print(f"\n最佳提示模板:")
         print(f"{best_prompt}")
-        print(f"最佳分数: {best_score}")
-        
-        # 存储最佳提示模板
+        print(f"最佳分数: {best_score}\n\n\n==============")        
         self.best_prompt = best_prompt
     
     def _evaluate_prompt(self, test_cases: List[Dict[str, str]], prompt: str) -> float:
@@ -211,162 +207,153 @@ class RAGFinetuner:
             query = case["query"]
             expected = case["expected_answer"]
             
-            try:
-                # 执行实际检索获取上下文
-                retrieved_docs = self.rag.retrieve(query, k=3)
-                
-                if not retrieved_docs:
-                    print(f"警告：查询 '{query}' 未检索到任何文档")
-                    total_score += 0.0
-                    continue
-                
-                # 使用指定的提示模板生成回答
-                from langchain_core.prompts import PromptTemplate
-                
-                # 创建提示模板
-                prompt_template = PromptTemplate(
-                    input_variables=["context", "question"],
-                    template=prompt
-                )
-                
-                # 构建上下文
-                context = "\n".join([doc.page_content for doc in retrieved_docs])
-                
-                # 生成回答
-                prompt_text = prompt_template.format(context=context, question=query)
-                answer = self.rag.llm.invoke(prompt_text)
-                
-                print(f"\n查询: {query}")
-                print(f"期望回答: {expected}")
-                print(f"实际回答: {answer[:100]}...")
-                
-                # 评估回答质量
-                score = self._calculate_answer_score(answer, expected)
-                total_score += score
-                print(f"得分: {score}")
-                
-            except Exception as e:
-                print(f"生成回答时出错: {e}")
+            # 执行实际检索获取上下文
+            if self.best_retrieval_params:
+                best_k = self.best_retrieval_params["k"]  
+            else:
+                raise ValueError("best_retrieval_params 未设置")
+            retrieved_docs = self.rag.retrieve(query, k=best_k)
+            
+            if not retrieved_docs:
+                print(f"警告：查询 '{query}' 未检索到任何文档")
                 total_score += 0.0
+                continue
+                                 
+            prompt_template = PromptTemplate(
+                input_variables=["context", "question"],
+                template=prompt
+            )
+            
+            # 构建上下文
+            context = "\n".join([doc.page_content for doc in retrieved_docs])                
+            # 生成回答
+            prompt_text = prompt_template.format(context=context, question=query)
+            answer = self.rag.llm.invoke(prompt_text)
+            
+            print(f"\n查询: {query}")
+            print(f"期望回答: {expected}")
+            print(f"实际回答: {answer[:100]}...")
+            
+            # 评估回答质量
+            score = self._calculate_answer_score(answer, expected)
+            total_score += score
+            print(f"得分: {score}")
         
         return total_score / len(test_cases)
     
     def _calculate_answer_score(self, answer: str, expected: str) -> float:
         """计算回答质量得分"""
-        # 简单的匹配评分
+        # 优化后的评分逻辑：多维度评估
+        
+        # 1. 完全匹配（最高分）
         if expected in answer:
-            return 1.0
-        elif any(word in answer for word in expected.split()[:3]):
-            return 0.5
-            #! 该方法仅用于简单匹配，实际应用中需要更复杂的评分逻辑
-            #! 而且该方法仅考虑了关键词是否在回答中出现，没有考虑关键词的顺序和上下文
-            #! 同时，该方法所使用的answer据说是前三个单词是核心关键词，此处存疑
-        else:
-            # 计算关键词匹配率
-            expected_words = set(expected.split())
-            answer_words = set(answer.split())
-            common_words = expected_words.intersection(answer_words)
-            
-            if expected_words:
-                match_ratio = len(common_words) / len(expected_words)
-                return min(0.5, match_ratio)
-            else:
-                return 0.0
+            return 1.0        
+        # 2. 语义相似度评估
+        similarity_score = self._calculate_semantic_similarity(answer, expected)        
+        # 3. 关键词覆盖率评估
+        keyword_score = self._calculate_keyword_coverage(answer, expected)        
+        # 4. 关键信息完整性评估
+        completeness_score = self._calculate_completeness(answer, expected)        
+        # 综合评分（加权平均）
+        final_score = (similarity_score * 0.4 + keyword_score * 0.3 + completeness_score * 0.3)        
+        return final_score
+    
+    def _calculate_semantic_similarity(self, answer: str, expected: str) -> float:
+        """计算语义相似度"""
+        # 使用简单的文本相似度算法（实际应用中可使用更复杂的模型）
+        from difflib import SequenceMatcher
+        
+        # 去除标点符号和空白字符
+        import re
+        answer_clean = re.sub(r'[^\w\u4e00-\u9fff]', '', answer)
+        expected_clean = re.sub(r'[^\w\u4e00-\u9fff]', '', expected)
+        
+        similarity = SequenceMatcher(None, answer_clean, expected_clean).ratio()
+        return similarity
+    
+    def _calculate_keyword_coverage(self, answer: str, expected: str) -> float:
+        """计算关键词覆盖率"""
+        # 提取关键信息词（名词、动词等）
+        import jieba
+        import jieba.posseg as pseg
+        
+        # 提取期望回答中的关键词（名词、动词）
+        expected_keywords = set()
+        for word, flag in pseg.cut(expected):
+            if flag.startswith(('n', 'v', 'a')):  # 名词、动词、形容词
+                expected_keywords.add(word)
+        
+        if not expected_keywords:
+            return 0.0
+        
+        # 计算回答中覆盖的关键词比例
+        matched_keywords = 0
+        for keyword in expected_keywords:
+            if keyword in answer:
+                matched_keywords += 1
+        
+        return matched_keywords / len(expected_keywords)
+    
+    def _calculate_completeness(self, answer: str, expected: str) -> float:
+        """计算关键信息完整性"""
+        # 基于关键信息点的完整性评分        
+        # 提取关键信息点（数字、专有名词等）
+        import re
+        
+        # 提取数字信息
+        expected_numbers = set(re.findall(r'\d+\.?\d*', expected))
+        answer_numbers = set(re.findall(r'\d+\.?\d*', answer))
+        
+        # 提取品牌、产地等专有名词
+        expected_entities = set(re.findall(r'[\u4e00-\u9fff]{2,4}(?=品牌|产地|系列)', expected))
+        answer_entities = set(re.findall(r'[\u4e00-\u9fff]{2,4}(?=品牌|产地|系列)', answer))
+        
+        # 计算信息点覆盖率
+        total_points = len(expected_numbers) + len(expected_entities)
+        if total_points == 0:
+            return 0.5  # 如果没有明显的信息点，给中等分数
+        
+        matched_points = len(expected_numbers.intersection(answer_numbers)) + \
+                        len(expected_entities.intersection(answer_entities))
+        
+        return matched_points / total_points
     
     def tune_chunking_strategy(self, documents: List[Any] = None, chunking_params: Dict[str, List[int]] = None) -> None:
         """微调文本分割策略"""
-        print("\n=== 微调文本分割策略 ===")
+        print("\n=== 微调文本分割策略 ===")         
+        # 生成所有分割参数组合
+        chunk_sizes = self.config["finetuning_config"]["chunking_params"]["chunk_sizes"]
+        chunk_overlaps = self.config["finetuning_config"]["chunking_params"]["chunk_overlaps"]
         
-        try:
-            # 如果没有提供文档，尝试获取
-            if documents is None:
-                documents = self._get_chunking_documents()
-            
-            # 如果没有提供参数，尝试获取
-            if chunking_params is None:
-                # 这里传入空字典，因为我们不依赖 test_data
-                chunking_params = self._get_chunking_params({})
-            
-            # 生成所有分割参数组合
-            chunk_sizes = chunking_params.get("chunk_sizes", [500, 1000, 2000])
-            chunk_overlaps = chunking_params.get("chunk_overlaps", [100, 200, 300])
-            
-            best_params = None
-            best_score = 0.0
-            
-            for chunk_size in chunk_sizes:
-                for chunk_overlap in chunk_overlaps:
-                    if chunk_overlap >= chunk_size:
-                        continue
-                        
-                    current_params: Dict[str, int] = {
-                        "chunk_size": chunk_size,
-                        "chunk_overlap": chunk_overlap
-                    }
+        best_params = None
+        best_score = 0.0
+        
+        for chunk_size in chunk_sizes:
+            for chunk_overlap in chunk_overlaps:
+                if chunk_overlap >= chunk_size:
+                    continue
                     
-                    print(f"测试分割参数: {current_params}")
-                    
-                    # 测试当前分割策略
-                    current_score = self._evaluate_chunking(current_params)
-                    
-                    print(f"分割分数: {current_score}")
-                    
-                    # 更新最佳参数
-                    if current_score > best_score:
-                        best_score = current_score
-                        best_params = current_params
-            
-            print(f"\n最佳分割参数: {best_params}")
-            print(f"最佳分数: {best_score}")
-            
-            # 如果没有找到最佳参数，使用默认值
-            if best_params is None:
-                print("未找到有效分割参数，使用默认值")
-                best_params = {"chunk_size": 1000, "chunk_overlap": 200}
+                current_params: Dict[str, int] = {
+                    "chunk_size": chunk_size,
+                    "chunk_overlap": chunk_overlap
+                }                
+                print(f"测试分割参数: {current_params}")
                 
-        except Exception as e:
-            print(f"微调分割策略时出错: {e}")
-            best_params = {"chunk_size": 1000, "chunk_overlap": 200}  # 使用默认值
+                # 测试当前分割策略
+                current_score = self._evaluate_chunking(current_params)                
+                print(f"分割分数: {current_score}")
+                
+                # 更新最佳参数
+                if current_score > best_score:
+                    best_score = current_score
+                    best_params = current_params
+            
+        self.best_chunking = best_params
+        print(f"\n最佳分割参数: {best_params}")
+        print(f"最佳分数: {best_score}\n\n\n==============")
     
     def _get_chunking_documents(self) -> List[Any]:
-        """获取用于分割策略评估的文档"""
-        try:
-            # 尝试从数据路径加载文档
-            if hasattr(self, "data_path") and self.data_path:
-                try:
-                    documents = self.rag.load_documents(self.data_path)
-                    if documents:
-                        print(f"成功加载 {len(documents)} 个文档用于分割策略评估")
-                        return documents
-                except Exception as e:
-                    print(f"加载文档时出错: {e}")
-            
-            # 回退到默认测试文档
-            print("使用默认文档进行分割策略评估")
-            return self._get_test_documents()
-        except Exception as e:
-            print(f"获取分割策略评估文档时出错: {e}")
-            # 返回空列表，让调用方处理
-            return []
-    
-    def _get_chunking_params(self, test_data: Dict[str, Any]) -> Dict[str, List[int]]:
-        """获取分割策略参数"""
-        # 尝试从配置中获取
-        try:
-            if hasattr(self, "base_config"):
-                # 检查是否有 finetuning_config
-                if "finetuning_config" in self.base_config:
-                    if "chunking_params" in self.base_config["finetuning_config"]:
-                        return self.base_config["finetuning_config"]["chunking_params"]
-        except Exception as e:
-            print(f"获取分割参数时出错: {e}")
-        
-        # 使用默认参数
-        print("使用默认分割参数")
-        return {
-            "chunk_sizes": [500, 1000, 1500, 2000],
-            "chunk_overlaps": [100, 200, 300]
-        }
+        return 
     
     def _evaluate_chunking(self, params: Dict[str, int]) -> float:
         """评估分割策略效果"""
@@ -381,10 +368,7 @@ class RAGFinetuner:
         """使用启发式方法评估分割策略"""
         # 简化的评估逻辑
         # 实际应基于分割后文档的检索效果和生成质量评估
-        # 这里使用一个启发式评分：
-        # - 适中的chunk_size更好（避免过短或过长）
-        # - chunk_overlap应适中（避免过多重复）
-        
+        # 这里使用一个启发式评分：- 适中的chunk_size更好（避免过短或过长）- chunk_overlap应适中（避免过多重复）        
         chunk_size = params["chunk_size"]
         chunk_overlap = params["chunk_overlap"]
         
@@ -395,119 +379,169 @@ class RAGFinetuner:
         ideal_overlap = chunk_size * 0.15
         overlap_score = 1.0 - abs(chunk_overlap - ideal_overlap) / chunk_size
         
-        total_score = (size_score + overlap_score) / 2
-        
+        total_score = (size_score + overlap_score) / 2        
         return total_score
     
     def _evaluate_chunking_with_llm(self, params: Dict[str, int]) -> float:
         """使用LLM评估分割策略效果"""
-        print("使用LLM评估分割策略...")
-        
-        try:
-            # 准备评估数据（使用示例文档或实际文档）
-            test_documents = self._get_test_documents()
-            if not test_documents:
-                # 如果没有测试文档，回退到启发式评估
-                print("警告：无测试文档，回退到启发式评估")
-                return self._evaluate_chunking_heuristic(params)
-            
-            # 使用当前参数执行分割
-            chunk_size = params["chunk_size"]
-            chunk_overlap = params["chunk_overlap"]
-            
-            # 临时修改RAG的分割参数进行评估
-            original_chunk_size = getattr(self.rag, "chunk_size", 1000)
-            original_chunk_overlap = getattr(self.rag, "chunk_overlap", 200)
-            
-            self.rag.chunk_size = chunk_size
-            self.rag.chunk_overlap = chunk_overlap
-            
-            # 执行分割
-            split_docs = self.rag.split_documents(test_documents)
-            
-            # 恢复原始参数
-            self.rag.chunk_size = original_chunk_size
-            self.rag.chunk_overlap = original_chunk_overlap
-            
-            if not split_docs:
-                print("警告：分割后无文档，回退到启发式评估")
-                return self._evaluate_chunking_heuristic(params)
-            
-            # 选择部分分割结果进行评估
-            eval_docs = split_docs[:3]  # 只评估前3个分割结果以节省成本
-            total_score = 0.0
-            
-            for i, doc in enumerate(eval_docs):
-                # 构建评估提示
-                eval_prompt = f"""请评估以下文本片段作为文档分割结果的质量，从以下几个方面打分（0-10分）：
-1. 语义完整性：片段是否保持了完整的语义
-2. 边界合理性：分割是否在合理的语义边界上
-3. 信息密度：片段包含的信息量是否适中
-4. 上下文连贯性：片段内部是否连贯
-
-文本片段：
-{doc.page_content}
-
-请返回一个综合评分（0-10分），只需要数字，不需要其他说明。"""
-                
-                # 使用LLM生成评估
-                try:
-                    response = self.rag.llm.invoke(eval_prompt)
-                    # 提取评分
-                    score_text = response.strip()
-                    # 尝试从响应中提取数字
-                    import re
-                    score_match = re.search(r'\d+(\.\d+)?', score_text)
-                    if score_match:
-                        score = float(score_match.group()) / 10.0  # 转换为0-1范围
-                        score = min(1.0, max(0.0, score))  # 确保在0-1范围内
-                        total_score += score
-                        print(f"分割片段 {i+1} 评分: {score:.2f}")
-                    else:
-                        print(f"警告：无法从LLM响应中提取评分，使用默认值0.5")
-                        total_score += 0.5
-                except Exception as e:
-                    print(f"LLM评估出错: {e}，使用默认值0.5")
-                    total_score += 0.5
-            
-            # 计算平均得分
-            final_score = total_score / len(eval_docs)
-            print(f"LLM评估最终得分: {final_score:.2f}")
-            
-            return final_score
-            
-        except Exception as e:
-            print(f"LLM评估分割策略时出错: {e}，回退到启发式评估")
+        print("使用LLM评估分割策略...")    
+        # 准备评估数据（使用示例文档或实际文档）
+        test_documents = self.rag.load_documents(self.data_path)
+        if not test_documents:
+            print("警告：无测试文档，回退到启发式评估")
             return self._evaluate_chunking_heuristic(params)
+        
+        # 使用当前参数执行分割
+        chunk_size = params["chunk_size"]
+        chunk_overlap = params["chunk_overlap"]   
+
+        # 临时修改RAG的分割参数进行评估
+        original_chunk_size = self.rag.text_splitter._chunk_size
+        original_chunk_overlap = self.rag.text_splitter._chunk_overlap
+        self.rag.set_text_splitter(chunk_size, chunk_overlap)        
+        # 执行分割
+        split_docs = self.rag.split_documents(test_documents)        
+        # 恢复原始参数
+        self.rag.set_text_splitter(original_chunk_size, original_chunk_overlap)     
+        
+        if not split_docs:
+            print("警告：分割后无文档，回退到启发式评估")
+            return self._evaluate_chunking_heuristic(params)
+        
+        total_score = 0.0        
+        for i, doc in enumerate(split_docs):
+            eval_prompt = f"""
+            请评估以下文本片段作为文档分割结果的质量，从以下几个方面打分（0-10分）：\n1. 语义完整性：片段是否保持了完整的语义\n2. 边界合理性：分割是否在合理的语义边界上\n3. 信息密度：片段包含的信息量是否适中\n4. 上下文连贯性：片段内部是否连贯\n\n文本片段：\n{doc.page_content}\n\n请返回一个综合评分（0-10分），只需要数字，不需要其他说明。
+            """            
+            # 使用LLM生成评估
+            response = self.rag.llm.invoke(eval_prompt)
+            # 提取评分
+            score_text = response.strip()
+            # 尝试从响应中提取数字
+            score_match = re.search(r'\d+(\.\d+)?', score_text)
+            if score_match:
+                score = float(score_match.group()) / 10.0  # 转换为0-1范围
+                score = min(1.0, max(0.0, score))  # 确保在0-1范围内
+                total_score += score
+                print(f"分割片段 {i+1} 评分: {score:.2f}")
+            else:
+                print(f"警告：无法从LLM响应中提取评分，使用默认值0.5")
+                total_score += 0.5
+        
+        # 计算平均得分
+        final_score = total_score / len(split_docs)
+        print(f"LLM评估最终得分: {final_score:.2f}")
+        
+        return final_score
+
     
     def _get_test_documents(self) -> List[Any]:
         """获取用于评估的测试文档"""
         # 尝试从数据路径加载文档
         if self.data_path:
-            try:
-                return self.rag.load_documents(self.data_path)
-            except Exception as e:
-                print(f"加载测试文档出错: {e}")
-        
-        # 如果没有数据路径，使用默认测试文档
-        from langchain_core.documents import Document
-        default_docs = [
-            Document(
-                page_content="卷烟是一种复杂的消费品，由烟叶、滤嘴、卷烟纸等多种材料组成。卷烟的生产过程包括烟叶处理、配方设计、卷制包装等多个环节。不同品牌的卷烟在口味、香气、焦油含量等方面存在差异，这些差异主要由烟叶配方和生产工艺决定。",
-                metadata={"source": "default"}
-            ),
-            Document(
-                page_content="烟草行业是我国重要的产业之一，对国家财政收入有着重要贡献。近年来，随着健康意识的提高，烟草控制政策逐渐加强，卷烟销量呈现下降趋势。同时，烟草企业也在积极探索新型烟草制品，以适应市场变化。",
-                metadata={"source": "default"}
-            )
-        ]
-        return default_docs
+            return self.rag.load_documents(self.data_path)
+        else:
+            raise ValueError("未指定数据路径，无法加载测试文档")
     
     def compare_embedding_models(self, model_candidates: List[str], test_data: List[Dict[str, str]]) -> str:
-        pass
+        """比较不同的嵌入模型"""
+        print("\n=== 比较嵌入模型 ===")
+        
+        if not model_candidates:
+            print("警告：无嵌入模型候选，使用默认模型")
+            return self.config["base_config"]["embedding_model"]
+        
+        best_model: str = None
+        best_score: float = 0.0
+        
+        for i, model in enumerate(model_candidates):
+            print(f"\n测试嵌入模型 {i+1}/{len(model_candidates)}: {model}")
+            
+            # 评估当前模型
+            current_score = self._evaluate_embedding_model(model, test_data)
+            print(f"模型 {model} 得分: {current_score:.4f}")            
+            # 更新最佳模型
+            if current_score > best_score:
+                best_score = current_score
+                best_model = model
+        
+        # 如果没有找到最佳模型，使用第一个候选模型
+        if best_model is None:
+            self.best_embedding = self.config["base_config"]["embedding_model"]
+            print("警告：未找到最佳模型，配置默认嵌入模型")
+        
+        print(f"\n最佳嵌入模型: {best_model}")
+        print(f"最佳得分: {best_score:.4f}\n\n\n==============")            
+        self.best_embedding = best_model        
+        return best_model
     
     def _evaluate_embedding_model(self, model: str, test_data: List[Dict[str, str]]) -> float:
-        pass
+        """评估单个嵌入模型的效果"""
+        # 保存当前嵌入模型
+        original_model = self.config["base_config"]["embedding_model"]                
+        self.rag.set_embedding_model(model)
+        
+        # 使用最佳参数重新初始化向量存储
+        if self.best_retrieval_params:
+            k = self.best_retrieval_params["k"]
+            similarity_threshold = self.best_retrieval_params["similarity_threshold"]
+        else:
+            k = 3
+            similarity_threshold = 0.7
+        
+        # 使用最佳文本分割参数重新构建向量存储
+        if self.best_chunking:
+            chunk_size = self.best_chunking["chunk_size"]
+            chunk_overlap = self.best_chunking["chunk_overlap"]
+            self.rag.set_text_splitter(chunk_size, chunk_overlap)
+        
+        # 重新加载和分割文档
+        documents = self.rag.load_documents(self.data_path)
+        split_documents = self.rag.split_documents(documents)
+        print(f'{model}的文档已分割为 {len(split_documents)}个片段')
+        
+        # 重新构建向量存储
+        store_path = os.path.join(self.config["base_config"]["vector_store_path"], model.replace("/", "_"))
+        self.rag.create_vector_store(
+            split_documents,
+            store_path=store_path)
+        print(f"新嵌入模型 {model} 的向量存储在: {store_path}")
+        # 加载新的向量存储
+        self.rag.load_vector_store(store_path)
+        
+        # 评估模型效果
+        total_score = 0.0
+        for item in test_data:
+            query = item["query"]
+            expected = item["expected_answer"]
+            
+            # 检索相关文档
+            retrieved_docs = self.rag.retrieve(query, k=k)
+            
+            if not retrieved_docs:
+                print(f"警告：查询 '{query}' 未检索到任何文档")
+                continue
+            
+            # 使用最佳提示模板生成回答
+            if self.best_prompt:
+                context = "\n".join([doc.page_content for doc in retrieved_docs])
+                prompt = self.best_prompt.format(context=context, question=query)
+                answer = self.rag.llm.invoke(prompt)
+            else:
+                # 使用默认生成方式
+                answer = self.rag.generate_answer(query, retrieved_docs)
+            
+            # 评估回答质量
+            score = self._calculate_answer_score(answer, expected)
+            total_score += score
+        
+        # 计算平均得分
+        avg_score = total_score / len(test_data) if test_data else 0.0
+        
+        # 恢复原始嵌入模型
+        self.rag.set_embedding_model(original_model)       
+             
+        return avg_score            
     
     def run_full_finetuning(self, test_data: Dict[str, Any]) -> Dict[str, Any]:
         """运行完整的微调流程"""
@@ -524,32 +558,32 @@ class RAGFinetuner:
         #     self.best_retrieval_params = {"k": 3, "similarity_threshold": 0.7}
         
         # 2. 优化提示模板
-        # self.optimize_prompt_template(
-        #     test_data["test_cases"],
-        #     test_data["prompt_candidates"]
-        # )
+        self.optimize_prompt_template(
+            test_data["test_cases"],
+            self.config["finetuning_config"]["prompt_candidates"]
+        )
         # 测试模式：使用默认值
-        if self.best_prompt is None:
-            print("使用默认提示模板 (测试模式)")
-            self.best_prompt = "请根据以下上下文回答问题：\n\n{context}\n\n问题：{question}\n\n回答："
+        # if self.best_prompt is None:
+        #     print("使用默认提示模板 (测试模式)")
+        #     self.best_prompt = "请根据以下上下文回答问题：\n\n{context}\n\n问题：{question}\n\n回答："
         
         # 3. 微调文本分割策略
-        # self.tune_chunking_strategy()
+        # self.tune_chunking_strategy(
+            # chunking_params=self.config["finetuning_config"]["chunking_params"])
         # 测试模式：使用默认值
         if self.best_chunking is None:
             print("使用默认分割参数 (测试模式)")
-            self.best_chunking = {"chunk_size": 1000, "chunk_overlap": 200}
-        # print(f"最佳分割参数: {self.best_chunking}")        
+            self.best_chunking = {"chunk_size": 1000, "chunk_overlap": 200}       
         
         # 4. 比较嵌入模型
-        # self.compare_embedding_models(
-        #     test_data["embedding_candidates"],
-        #     test_data["test_cases"]
-        # )
+        self.compare_embedding_models(
+            self.config["finetuning_config"]["embedding_candidates"],
+            self.config["finetuning_config"]["test_cases"]
+        )
         # 测试模式：使用默认值
-        if self.best_embedding is None:
-            print("使用默认嵌入模型 (测试模式)")
-            self.best_embedding = self.config["base_config"]["embedding_model"]
+        # if self.best_embedding is None:
+        #     print("使用默认嵌入模型 (测试模式)")
+        #     self.best_embedding = self.config["base_config"]["embedding_model"]
         
         # 整合最佳参数
         best_config = {
@@ -578,12 +612,8 @@ def main():
     
     # 创建微调器实例，传入数据路径以启用实际检索
     finetuner = RAGFinetuner(config, data_path=data_path)
-    
-    # 测试数据
-    test_data = config["test_data"]
-    
     # 运行完整微调流程
-    best_config = finetuner.run_full_finetuning(test_data)
+    best_config = finetuner.run_full_finetuning(config["test_data"])
     
     # 保存最佳配置
     # with open("best_rag_config.json", "w", encoding="utf-8") as f:

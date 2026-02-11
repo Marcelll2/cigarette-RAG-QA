@@ -55,8 +55,40 @@ class BasicRAG:
             cache_folder=self.config["base_config"]["llm_cache"]  # 保留get，因为llm_cache是可选的
         )
         
-        print("RAG组件初始化完成")
+        print(f"RAG组件初始化完成:"
+              f"文本分割器: {self.text_splitter}\n"
+              f"嵌入模型: {self.embedding_model}\n"
+              f"LLM模型: {self.llm.model}")
     
+    def set_text_splitter(self, chunk_size: int, chunk_overlap: int):
+        """设置文本分割器"""
+        self.text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap)
+
+    def set_embedding_model(self, model_name: str = None):
+        origin_embedding_model = self.embedding_model
+        if model_name is None:
+            raise ValueError("model_name 不能为空")
+        if model_name == origin_embedding_model.model_name:
+            raise ValueError(f"模型 {model_name} 与当前模型相同，无需切换")
+            
+        self.embedding_model = HuggingFaceEmbeddings(
+            model_name=model_name,
+            cache_folder=self.config["base_config"]["cache_folder"])  # 保留get，因为cache_folder是可选的
+    
+    def set_llm(self, model_name: str = None):
+        origin_llm = self.llm
+        if model_name is None:
+            raise ValueError("model_name 不能为空")
+        if model_name == origin_llm.model:
+            raise ValueError(f"模型 {model_name} 与当前模型相同，无需切换")
+            
+        self.llm = OllamaLLM(
+            model=model_name,
+            temperature=self.config["base_config"]["temperature"],
+            cache_folder=self.config["base_config"]["llm_cache"])  # 保留get，因为llm_cache是可选的
+
     def load_documents(self, data_path: str) -> List[Any]:
         """加载文档"""
         documents = []
@@ -165,10 +197,10 @@ class BasicRAG:
         for doc in documents:
             # 检查是否是Excel文档（通过metadata中的source字段判断）
             if 'xlsx' in doc.metadata.get('source', ''):
-                # Excel文档已经按行分割，直接添加
+                print(f"Excel文档 {doc.metadata.get('source', '未知')} 已按行分割，直接添加")
                 split_docs.append(doc)
             else:
-                # 对于非Excel文档，使用默认的文本分割器
+                print(f"非Excel文档 {doc.metadata.get('source', '未知')} ，使用默认的文本分割器")
                 split_docs.extend(self.text_splitter.split_documents([doc]))
         
         print(f"分割文档完成，从{len(documents)}个文档分割为{len(split_docs)}个片段")
@@ -238,6 +270,15 @@ class BasicRAG:
         print(f"向量库保存到: {store_path_}")
         print(f"创建向量存储完成，文档数量: {len(documents)}")
     
+    def load_vector_store(self, store_path: str = None):
+        if not store_path:
+            store_path = os.path.join(self.config["base_config"]["vector_store_path"], self.embedding_model.model_name.replace("/", "_"))
+        self.vector_store = FAISS.load_local(
+            store_path,
+            self.embedding_model)
+        print(f"向量库加载自: {store_path}")
+        print(f"加载向量存储完成，文档数量: {self.vector_store.index.ntotal}")
+    
     def retrieve(self, query: str, k: int = 3) -> List[Any]:
         """检索相关文档"""
         if not self.vector_store:
@@ -301,18 +342,6 @@ class BasicRAG:
         accuracy = correct / total if total > 0 else 0.0
         return {"accuracy": accuracy}
 
-    def set_embedding_model(self, model_name: str = None):
-        origin_embedding_model = self.embedding_model
-        if model_name is None:
-            raise ValueError("model_name 不能为空")
-        if model_name == origin_embedding_model.model_name:
-            raise ValueError(f"模型 {model_name} 与当前模型相同，无需切换")
-            
-        self.embedding_model = HuggingFaceEmbeddings(
-            model_name=model_name,
-            cache_folder=self.config["base_config"]["cache_folder"]  # 保留get，因为cache_folder是可选的
-        )
-
 def load_config(config_path: str) -> Dict[str, Any]:
     """从文件加载配置"""
     with open(config_path, 'r', encoding='utf-8') as f:
@@ -331,11 +360,7 @@ def main():
     rag.init_components()
     
     # 加载Excel文档
-    documents = rag.load_documents(config["base_config"]["data_path"])
-    # 保存文档
-    # rag.save_documents(documents, ../saved_documents/documents.json)
-    # rag.print_documents(documents)    
-    
+    documents = rag.load_documents(config["base_config"]["data_path"])    
     # 分割文档
     split_docs = rag.split_documents(documents)
     rag.save_documents(split_docs, os.path.join(config["base_config"]["save_docs_path"], "split_docs.json"))
