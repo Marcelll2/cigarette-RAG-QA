@@ -235,6 +235,7 @@ def evaluate_rag_system(rag: BasicRAG, config: Dict[str, Any]):
         print(f"   - 测试用例数: {len(test_cases)}")
         
         # 详细测试结果
+        #! 这里仍需要评估，因为下面的评价“单一句子匹配”不合理且不准确不够反映模型的性能
         print("\n📋 详细测试结果:")
         for i, case in enumerate(test_cases, 1):
             print(f"\n--- 测试用例 {i} ---")
