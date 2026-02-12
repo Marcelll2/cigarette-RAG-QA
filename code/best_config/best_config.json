@@ -1,0 +1,12 @@
+{
+  "retrieval_params": {
+    "k": 2,
+    "similarity_threshold": 0.7
+  },
+  "prompt_template": "规则：\n1. 答案必须完全来自上下文，不得编造。\n2. 只用中文，简洁准确。\n上下文：{context}\n问题：{question}\n答案：",
+  "chunking_params": {
+    "chunk_size": 500,
+    "chunk_overlap": 100
+  },
+  "embedding_model": "BAAI/bge-large-zh-v1.5"
+}

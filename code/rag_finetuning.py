@@ -9,6 +9,8 @@ import json
 import itertools
 import os
 import re
+import argparse
+import logging
 from typing import List, Dict, Any
 from rag_base import BasicRAG
 from langchain_community.vectorstores import FAISS
@@ -18,8 +20,9 @@ from langchain_core.prompts import PromptTemplate
 
 class RAGFinetuner:
     """RAG微调类"""
-    def __init__(self, config: Dict[str, Any], data_path: str = None):
+    def __init__(self, config: Dict[str, Any], data_path: str = None, args: argparse.Namespace = None):
         """初始化微调器"""
+        self.args = args
         self.config = config
         self.rag = BasicRAG(self.config)
         self.rag.init_components()
@@ -445,18 +448,18 @@ class RAGFinetuner:
     
     def compare_embedding_models(self, model_candidates: List[str], test_data: List[Dict[str, str]]) -> str:
         """比较不同的嵌入模型"""
-        print("\n=== 比较嵌入模型 ===")
-        
+        print("\n=== 比较嵌入模型 ===")        
         if not model_candidates:
             print("警告：无嵌入模型候选，使用默认模型")
             return self.config["base_config"]["embedding_model"]
         
         best_model: str = None
         best_score: float = 0.0
+        original_embedding_model: str = self.rag.embedding_model.model_name
         
         for i, model in enumerate(model_candidates):
             print(f"\n测试嵌入模型 {i+1}/{len(model_candidates)}: {model}")
-            
+                        
             # 评估当前模型
             current_score = self._evaluate_embedding_model(model, test_data)
             print(f"模型 {model} 得分: {current_score:.4f}")            
@@ -466,34 +469,50 @@ class RAGFinetuner:
                 best_model = model
         
         # 如果没有找到最佳模型，使用第一个候选模型
-        if best_model is None:
-            self.best_embedding = self.config["base_config"]["embedding_model"]
-            print("警告：未找到最佳模型，配置默认嵌入模型")
+        if not best_model:
+            best_model = model_candidates[0] if model_candidates else self.config["base_config"]["embedding_model"]
+            print(f"警告：未找到有效的最佳模型，使用默认候选模型 {best_model}")
         
-        print(f"\n最佳嵌入模型: {best_model}")
-        print(f"最佳得分: {best_score:.4f}\n\n\n==============")            
+        # 恢复原始嵌入模型
+        self.rag.set_embedding_model(original_embedding_model)
+        documents = self.rag.load_documents(self.data_path)
+        split_documents = self.rag.split_documents(documents)
+        store_path = os.path.join(self.config["base_config"]["vector_store_path"], self.rag.embedding_model.model_name.replace("/", "_"))
+        self.rag.create_vector_store(
+            split_documents, 
+            store_path)
+        print(f'已恢复原始嵌入模型: {original_embedding_model}'
+                f'，并已重新构建向量存储到 {store_path}')
+        
+        # 保存最佳嵌入模型
         self.best_embedding = best_model        
+        print(f"\n最佳嵌入模型: {best_model}")
+        print(f"最佳得分: {best_score:.4f}\n\n\n==============")        
         return best_model
     
     def _evaluate_embedding_model(self, model: str, test_data: List[Dict[str, str]]) -> float:
         """评估单个嵌入模型的效果"""
         # 保存当前嵌入模型
-        original_model = self.config["base_config"]["embedding_model"]                
+        original_model = self.rag.embedding_model           
         self.rag.set_embedding_model(model)
+        print(f'已切换到嵌入模型: {model}')
         
         # 使用最佳参数重新初始化向量存储
         if self.best_retrieval_params:
             k = self.best_retrieval_params["k"]
             similarity_threshold = self.best_retrieval_params["similarity_threshold"]
+            print(f'使用最佳检索参数: k={k}, similarity_threshold={similarity_threshold}')
         else:
             k = 3
             similarity_threshold = 0.7
+            print(f'使用默认（非最佳）检索参数: k={k}, similarity_threshold={similarity_threshold}')
         
         # 使用最佳文本分割参数重新构建向量存储
         if self.best_chunking:
             chunk_size = self.best_chunking["chunk_size"]
             chunk_overlap = self.best_chunking["chunk_overlap"]
             self.rag.set_text_splitter(chunk_size, chunk_overlap)
+            print(f'使用最佳文本分割参数: chunk_size={chunk_size}, chunk_overlap={chunk_overlap}')
         
         # 重新加载和分割文档
         documents = self.rag.load_documents(self.data_path)
@@ -501,13 +520,11 @@ class RAGFinetuner:
         print(f'{model}的文档已分割为 {len(split_documents)}个片段')
         
         # 重新构建向量存储
-        store_path = os.path.join(self.config["base_config"]["vector_store_path"], model.replace("/", "_"))
         self.rag.create_vector_store(
             split_documents,
-            store_path=store_path)
-        print(f"新嵌入模型 {model} 的向量存储在: {store_path}")
+            store_path=self.config["base_config"]["vector_store_path"])
         # 加载新的向量存储
-        self.rag.load_vector_store(store_path)
+        self.rag.load_vector_store()
         
         # 评估模型效果
         total_score = 0.0
@@ -536,10 +553,7 @@ class RAGFinetuner:
             total_score += score
         
         # 计算平均得分
-        avg_score = total_score / len(test_data) if test_data else 0.0
-        
-        # 恢复原始嵌入模型
-        self.rag.set_embedding_model(original_model)       
+        avg_score = total_score / len(test_data) if test_data else 0.0    
              
         return avg_score            
     
@@ -551,39 +565,20 @@ class RAGFinetuner:
         self.tune_retrieval_params(
             test_data["test_queries"],
             self.config["finetuning_config"]["retrieval_param_grid"]
-        )
-        # 测试模式：使用默认值
-        # if self.best_retrieval_params is None:
-        #     print("使用默认检索参数 (测试模式)")
-        #     self.best_retrieval_params = {"k": 3, "similarity_threshold": 0.7}
-        
+        )        
         # 2. 优化提示模板
         self.optimize_prompt_template(
             test_data["test_cases"],
             self.config["finetuning_config"]["prompt_candidates"]
-        )
-        # 测试模式：使用默认值
-        # if self.best_prompt is None:
-        #     print("使用默认提示模板 (测试模式)")
-        #     self.best_prompt = "请根据以下上下文回答问题：\n\n{context}\n\n问题：{question}\n\n回答："
-        
+        )        
         # 3. 微调文本分割策略
-        # self.tune_chunking_strategy(
-            # chunking_params=self.config["finetuning_config"]["chunking_params"])
-        # 测试模式：使用默认值
-        if self.best_chunking is None:
-            print("使用默认分割参数 (测试模式)")
-            self.best_chunking = {"chunk_size": 1000, "chunk_overlap": 200}       
-        
+        self.tune_chunking_strategy(
+            chunking_params=self.config["finetuning_config"]["chunking_params"])        
         # 4. 比较嵌入模型
         self.compare_embedding_models(
             self.config["finetuning_config"]["embedding_candidates"],
-            self.config["finetuning_config"]["test_cases"]
+            self.config["test_data"]["test_cases"]
         )
-        # 测试模式：使用默认值
-        # if self.best_embedding is None:
-        #     print("使用默认嵌入模型 (测试模式)")
-        #     self.best_embedding = self.config["base_config"]["embedding_model"]
         
         # 整合最佳参数
         best_config = {
@@ -594,32 +589,159 @@ class RAGFinetuner:
         }     
         print("\n=== 微调完成 ===")
         print(f"最佳配置: {json.dumps(best_config, ensure_ascii=False, indent=2)}")
+        
+        # 保存最佳配置
+        if not self.args.save_config:
+            best_config_dir = self.config["base_config"]["best_config_store_pth"]
+            os.makedirs(best_config_dir, exist_ok=True)
+            best_config_save_pth = os.path.join(
+                best_config_dir,
+                f"best_config.json"
+            )
+            with open(best_config_save_pth, "w", encoding="utf-8") as f:
+                json.dump(best_config, f, ensure_ascii=False, indent=2)
+        
         return best_config
+
+def run_simulate_finetuning(self) -> Dict[str, Any]:
+    """模拟微调流程，仅评估模型效果"""
+    print("\n=== 开始模拟微调流程 ===")
+    self.best_retrieval_params = {"k": 3, "similarity_threshold": 0.7}
+    self.best_prompt = "请根据以下上下文回答问题：\n\n{context}\n\n问题：{question}\n\n回答："
+    self.best_chunking = {"chunk_size": 1000, "chunk_overlap": 200}         
+    self.best_embedding = self.config["base_config"]["embedding_model"]
+    best_config = {
+            "retrieval_params": self.best_retrieval_params,
+            "prompt_template": self.best_prompt,
+            "chunking_params": self.best_chunking,
+            "embedding_model": self.best_embedding
+        }
+    print(f"模拟微调配置: {json.dumps(best_config, ensure_ascii=False, indent=2)}")
+    return best_config
+
+def arg_sparse():
+    """命令行参数解析"""    
+    parser = argparse.ArgumentParser(description="RAG微调系统参数配置")
+    
+    # 基本参数
+    parser.add_argument("--config", type=str, default="config.json", 
+                       help="配置文件路径 (默认: config.json)")
+    parser.add_argument("--action", type=str, choices=["finetune", "evaluate", "test"], 
+                       default="finetune", help="执行动作 (默认: finetune)")
+    
+    # 微调控制参数
+    parser.add_argument("--skip-retrieval", action="store_true", 
+                       help="跳过检索参数微调")
+    parser.add_argument("--skip-prompt", action="store_true", 
+                       help="跳過提示模板优化")
+    parser.add_argument("--skip-chunking", action="store_true", 
+                       help="跳过文本分割策略微调")
+    parser.add_argument("--skip-embedding", action="store_true", 
+                       help="跳过嵌入模型比较")
+    
+    # 性能参数
+    parser.add_argument("--max-docs", type=int, default=100,
+                       help="最大处理文档数 (默认: 100)")
+    parser.add_argument("--eval-samples", type=int, default=10,
+                       help="评估样本数量 (默认: 10)")
+    parser.add_argument("--parallel", type=int, default=1,
+                       help="并行处理数 (默认: 1)")
+    
+    # 输出控制
+    parser.add_argument("--verbose", action="store_true", 
+                       help="详细输出模式")
+    parser.add_argument("--save-config", type=str, default=None,
+                       help="最佳配置保存路径 (默认: best_rag_config.json)")
+    parser.add_argument("--log-level", type=str, choices=["DEBUG", "INFO", "WARNING", "ERROR"], 
+                       default="INFO", help="日志级别 (默认: INFO)")
+    
+    # 特殊模式
+    parser.add_argument("--quick-test", action="store_true",
+                       help="快速测试模式（减少迭代次数）")
+    parser.add_argument("--dry-run", action="store_true",
+                       help="干运行模式（不实际执行，只显示计划）")
+    
+    return parser.parse_args()
+
 
 def main():
     """主函数"""
-    # 从config.json加载配置
-    config_file = "config.json"    
-    with open(config_file, 'r', encoding='utf-8') as f:
-        config = json.load(f)
-        print("配置加载成功")
+    # 解析命令行参数
+    args = arg_sparse()
+    """
+    run:
+    python rag_finetuning.py --config config.json --action finetune --verbose
+    """
     
-    # 数据路径（用于实际检索）
+    # 设置日志级别    
+    logging.basicConfig(level=getattr(logging, args.log_level))
+    
+    # 加载配置文件
+    config_file = args.config
+    try:
+        with open(config_file, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+        print(f"配置加载成功: {config_file}")
+    except FileNotFoundError:
+        print(f"错误：配置文件 {config_file} 不存在")
+        return
+    except json.JSONDecodeError:
+        print(f"错误：配置文件 {config_file} 格式错误")
+        return
+    
     # 原始数据路径
     data_path = config["base_config"]["data_path"]
-    # 向量存储路径
-    # vector_data_path = config["base_config"]["vector_data_path"]
     
-    # 创建微调器实例，传入数据路径以启用实际检索
-    finetuner = RAGFinetuner(config, data_path=data_path)
-    # 运行完整微调流程
-    best_config = finetuner.run_full_finetuning(config["test_data"])
+    # 根据参数调整配置
+    if args.quick_test:
+        print("快速测试模式：减少迭代次数")
+        # 减少参数组合数量
+        config["finetuning_config"]["retrieval_param_grid"]["k"] = [2, 3]
+        config["finetuning_config"]["retrieval_param_grid"]["similarity_threshold"] = [0.7]
+        config["finetuning_config"]["chunking_params"]["chunk_sizes"] = [500, 1000]
+        config["finetuning_config"]["chunking_params"]["chunk_overlaps"] = [100]
     
-    # 保存最佳配置
-    # with open("best_rag_config.json", "w", encoding="utf-8") as f:
-    #     json.dump(best_config, f, ensure_ascii=False, indent=2)
+    # 创建微调器实例
+    finetuner = RAGFinetuner(config, data_path=data_path, args=args)
     
-    # print("\n最佳配置已保存到 best_rag_config.json")
+    # 根据action参数执行不同操作
+    if args.action == "finetune":
+        if args.dry_run:
+            print("干运行模式：显示计划但不执行")
+            print("计划执行完整微调流程")
+            if args.skip_retrieval:
+                print("- 跳过检索参数微调")
+            if args.skip_prompt:
+                print("- 跳过提示模板优化")
+            if args.skip_chunking:
+                print("- 跳过文本分割策略微调")
+            if args.skip_embedding:
+                print("- 跳过嵌入模型比较")
+            return
+        
+        # 运行完整微调流程
+        best_config = finetuner.run_full_finetuning(config["test_data"])
+        
+        # 保存最佳配置
+        if args.save_config:
+            save_path = os.path.join(config["base_config"]["best_config_store_pth"], args.save_config)
+            try:
+                with open(save_path, 'w', encoding='utf-8') as f:
+                    json.dump(best_config, f, ensure_ascii=False, indent=2)
+                print(f"最佳配置已保存到: {save_path}")
+            except Exception as e:
+                print(f"保存配置时出错: {e}")
+    
+    elif args.action == "evaluate":
+        print("评估模式：运行系统评估")
+        # 这里可以添加评估逻辑
+        
+    elif args.action == "test":
+        print("测试模式：运行基本功能测试")
+        # 这里可以添加测试逻辑
+    
+    else:
+        print(f"未知操作: {args.action}")
 
 
 if __name__ == "__main__":

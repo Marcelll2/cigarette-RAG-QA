@@ -13,7 +13,8 @@
         "data_path": "../cigaratte_data.xlsx",
         "save_docs_path": "saved_documents",
         "retrieval_k": 3,
-        "show_retrieved_docs": false
+        "show_retrieved_docs": false,
+        "best_config_store_pth": "best_config"
     },
     "finetuning_config": {
         "retrieval_param_grid": {

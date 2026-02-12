@@ -67,11 +67,13 @@ class BasicRAG:
             chunk_overlap=chunk_overlap)
 
     def set_embedding_model(self, model_name: str = None):
+        """设置嵌入模型"""
         origin_embedding_model = self.embedding_model
         if model_name is None:
             raise ValueError("model_name 不能为空")
         if model_name == origin_embedding_model.model_name:
-            raise ValueError(f"模型 {model_name} 与当前模型相同，无需切换")
+            print(f"模型 {model_name} 与当前模型相同，无需切换")
+            return
             
         self.embedding_model = HuggingFaceEmbeddings(
             model_name=model_name,
@@ -197,10 +199,10 @@ class BasicRAG:
         for doc in documents:
             # 检查是否是Excel文档（通过metadata中的source字段判断）
             if 'xlsx' in doc.metadata.get('source', ''):
-                print(f"Excel文档 {doc.metadata.get('source', '未知')} 已按行分割，直接添加")
+                # print(f"Excel文档 {doc.metadata.get('source', '未知')} 已按行分割，直接添加")
                 split_docs.append(doc)
             else:
-                print(f"非Excel文档 {doc.metadata.get('source', '未知')} ，使用默认的文本分割器")
+                # print(f"非Excel文档 {doc.metadata.get('source', '未知')} ，使用默认的文本分割器")
                 split_docs.extend(self.text_splitter.split_documents([doc]))
         
         print(f"分割文档完成，从{len(documents)}个文档分割为{len(split_docs)}个片段")
@@ -275,7 +277,8 @@ class BasicRAG:
             store_path = os.path.join(self.config["base_config"]["vector_store_path"], self.embedding_model.model_name.replace("/", "_"))
         self.vector_store = FAISS.load_local(
             store_path,
-            self.embedding_model)
+            self.embedding_model,
+            allow_dangerous_deserialization=True)  # 允许反序列化pickle文件
         print(f"向量库加载自: {store_path}")
         print(f"加载向量存储完成，文档数量: {self.vector_store.index.ntotal}")
     

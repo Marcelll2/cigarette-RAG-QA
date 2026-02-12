@@ -1,3 +1,4 @@
 code/embedding_cache
 code/vector_store
 code/saved_documents
+code/__pycache__
