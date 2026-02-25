@@ -351,25 +351,24 @@ def load_config(config_path: str) -> Dict[str, Any]:
         return json.load(f)
 
 def main():
-    """主函数"""
-    # 从文件加载配置
+    # load config
     config_path = "config.json"
     config = load_config(config_path)
     
-    # 创建RAG实例
     rag = BasicRAG(config)
-    
-    # 初始化组件
+
+    # init components
     rag.init_components()
     
-    # 加载Excel文档
+    # load documents e.x. excel file
     documents = rag.load_documents(config["base_config"]["data_path"])    
-    # 分割文档
+
+    # split documents
     split_docs = rag.split_documents(documents)
     rag.save_documents(split_docs, os.path.join(config["base_config"]["save_docs_path"], "split_docs.json"))
     # print(f'split_docs: {split_docs}')
     
-    # 创建向量存储
+    # create vector store
     if not os.path.exists(config["base_config"]["vector_store_path"]):
         print(f"重新创建向量存储: {config['base_config']['vector_store_path']}")
         rag.create_vector_store(split_docs, config["base_config"]["vector_store_path"])
