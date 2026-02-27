@@ -71,7 +71,7 @@ def initialize_rag_system(config: Dict[str, Any]) -> BasicRAG:
             for file in ["index.faiss", "index.pkl"]
         ):
             print(f"📁 使用现有向量存储: {full_store_path}")
-            rag.load_vector_store(vector_store_path)
+            rag.load_vector_store(full_store_path)
         else:
             print(f"🔄 创建新向量存储: {full_store_path}")
             rag.create_vector_store(split_docs, vector_store_path)
@@ -260,6 +260,30 @@ def evaluate_rag_system(rag: BasicRAG, config: Dict[str, Any]):
 
 def main():
     """主函数"""
+    """
+    命令行使用示例：
+    
+    # ✅ 交互式查询模式 
+    # python main.py --action interactive
+    
+    # ✅ 批量查询模式（执行所有测试查询）
+    # python main.py --action batch
+    
+    # ✅ 批量查询模式（执行单个查询）
+    # python main.py --action batch --query "双喜品牌的卷烟产品有哪些？"
+    
+    # ✅ RAG微调模式
+    # python main.py --action finetune
+    
+    # ❌ 系统评估模式!
+    # python main.py --action evaluate
+    
+    # ❌ 数据准备模式
+    # python main.py --action prepare
+    
+    # ❌ 使用自定义配置文件
+    # python main.py --config custom_config.json --action interactive
+    """
     # 解析命令行参数
     parser = argparse.ArgumentParser(description="RAG 卷烟知识库系统")
     parser.add_argument(

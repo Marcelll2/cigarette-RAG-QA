@@ -97,12 +97,19 @@ class BasicRAG:
         
         if os.path.isdir(data_path):
             # 加载目录中的所有文件
+            # 支持 txt 文件，添加编码处理
             txt_loader = DirectoryLoader(
                 data_path,
                 glob="**/*.txt",
-                loader_cls=TextLoader
+                loader_cls=TextLoader,
+                loader_kwargs={"encoding": "utf-8"}  # 指定编码
             )
-            documents.extend(txt_loader.load())
+            try:
+                txt_docs = txt_loader.load()
+                documents.extend(txt_docs)
+                print(f"成功加载 {len(txt_docs)} 个txt文件")
+            except Exception as e:
+                print(f"加载txt文件时出错: {e}")
             
             # 加载Excel文件
             import glob
@@ -142,13 +149,24 @@ class BasicRAG:
                                     metadata=metadata
                                 )
                                 documents.append(doc)
+                except FileNotFoundError:
+                    print(f"文件不存在: {excel_file}")
+                except pd.errors.EmptyDataError:
+                    print(f"Excel文件为空: {excel_file}")
+                except pd.errors.ParserError:
+                    print(f"Excel文件解析错误: {excel_file}")
                 except Exception as e:
                     print(f"处理Excel文件时出错 {excel_file}: {e}")
         elif os.path.isfile(data_path):
             # 加载单个文件
             if data_path.endswith('.txt'):
-                loader = TextLoader(data_path)
-                documents.extend(loader.load())
+                try:
+                    loader = TextLoader(data_path, encoding="utf-8")  # 指定编码
+                    txt_docs = loader.load()
+                    documents.extend(txt_docs)
+                    print(f"成功加载txt文件: {data_path}")
+                except Exception as e:
+                    print(f"加载txt文件时出错 {data_path}: {e}")
             elif data_path.endswith('.xlsx'):
                 # 使用pandas直接读取Excel文件
                 try:
@@ -185,6 +203,13 @@ class BasicRAG:
                                     metadata=metadata
                                 )
                                 documents.append(doc)
+                    print(f"成功加载Excel文件: {data_path}")
+                except FileNotFoundError:
+                    print(f"文件不存在: {data_path}")
+                except pd.errors.EmptyDataError:
+                    print(f"Excel文件为空: {data_path}")
+                except pd.errors.ParserError:
+                    print(f"Excel文件解析错误: {data_path}")
                 except Exception as e:
                     print(f"处理Excel文件时出错 {data_path}: {e}")
         
@@ -275,11 +300,11 @@ class BasicRAG:
     def load_vector_store(self, store_path: str = None):
         if not store_path:
             store_path = os.path.join(self.config["base_config"]["vector_store_path"], self.embedding_model.model_name.replace("/", "_"))
+        print(f"向量库加载自: {store_path}")
         self.vector_store = FAISS.load_local(
             store_path,
             self.embedding_model,
-            allow_dangerous_deserialization=True)  # 允许反序列化pickle文件
-        print(f"向量库加载自: {store_path}")
+            allow_dangerous_deserialization=True)  # 允许反序列化pickle文件        
         print(f"加载向量存储完成，文档数量: {self.vector_store.index.ntotal}")
     
     def retrieve(self, query: str, k: int = 3) -> List[Any]:

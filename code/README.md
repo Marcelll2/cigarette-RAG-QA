@@ -144,6 +144,16 @@ python main.py --action evaluate
 python main.py --action prepare
 ```
 
+#### 使用自定义配置文件
+```bash
+# 使用自定义配置文件运行交互模式
+python main.py --config custom_config.json --action interactive
+
+# 使用自定义配置文件运行其他模式
+python main.py --config custom_config.json --action finetune
+python main.py --config custom_config.json --action evaluate
+```
+
 ## 详细使用说明
 
 ### 交互式查询模式
